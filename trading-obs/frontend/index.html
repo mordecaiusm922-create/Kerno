@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kerno - Market Observatory</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
+<style>
+:root{--bg:#080c10;--sur:#0d1218;--brd:#1a2230;--acc:#00e5ff;--grn:#7fff6e;--red:#ff4d6d;--ylw:#ffd166;--txt:#e2eaf4;--mut:#4a5a70}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:'Courier New',monospace;font-size:13px;height:100vh;overflow:hidden}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;border-bottom:1px solid var(--brd);background:rgba(8,12,16,.97);position:relative;z-index:10}
+.logo{font-size:20px;font-weight:900;color:var(--acc);letter-spacing:2px;display:flex;align-items:center;gap:10px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--grn);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+.tabs{display:flex;gap:3px;background:var(--sur);border:1px solid var(--brd);border-radius:6px;padding:3px}
+.tab{padding:5px 14px;border-radius:4px;cursor:pointer;font-size:11px;color:var(--mut);background:none;border:none;font-family:inherit}
+.tab.on{background:var(--acc);color:#000;font-weight:700}
+.live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--grn)}
+.ldot{width:6px;height:6px;border-radius:50%;background:var(--grn);animation:blink 1.5s infinite}
+.mbar{display:grid;grid-template-columns:repeat(6,1fr);border-bottom:1px solid var(--brd);background:var(--sur);position:relative;z-index:10}
+.mc{padding:10px 16px;border-right:1px solid var(--brd)}
+.mc:last-child{border-right:none}
+.ml{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.mv{font-size:17px;font-weight:700;color:var(--txt);transition:color .3s}
+.mv.up{color:var(--grn)}.mv.dn{color:var(--red)}
+.ms{font-size:10px;color:var(--mut);margin-top:2px}
+.main{display:grid;grid-template-columns:1fr 290px;height:calc(100vh - 107px);position:relative;z-index:10}
+.cp{display:flex;flex-direction:column;border-right:1px solid var(--brd)}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:9px 16px;border-bottom:1px solid var(--brd);background:rgba(13,18,24,.9)}
+.pt{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.pt span{font-size:10px;color:var(--mut);font-weight:400}
+.btns{display:flex;gap:5px}
+.btn{padding:4px 10px;border-radius:4px;border:1px solid var(--brd);background:var(--sur);color:var(--mut);font-family:inherit;font-size:11px;cursor:pointer;transition:all .2s}
+.btn.on,.btn:hover{border-color:var(--acc);color:var(--acc)}
+.cw{flex:1;padding:10px;min-height:0;position:relative}
+.ls{height:68px;border-top:1px solid var(--brd);padding:7px 16px;background:var(--sur)}
+.sl{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+#lb{display:flex;align-items:flex-end;gap:2px;height:34px;overflow:hidden}
+.lbar{flex:1;min-width:3px;border-radius:1px 1px 0 0;background:var(--acc);opacity:.7}
+.lbar.hi{background:var(--red);opacity:1}
+.fp{display:flex;flex-direction:column;overflow:hidden}
+#tf{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--brd) transparent}
+.fh{display:grid;grid-template-columns:1fr 1fr 50px;padding:6px 12px;border-bottom:1px solid var(--brd);font-size:10px;color:var(--mut);text-transform:uppercase;background:var(--sur)}
+.fr{text-align:right}
+.tr{display:grid;grid-template-columns:1fr 1fr 50px;padding:5px 12px;border-bottom:1px solid rgba(26,34,48,.4);font-size:12px}
+.tr.spike-row{background:rgba(255,209,102,.06);border-left:2px solid var(--ylw)}
+.tp{font-weight:700}.tp.b{color:var(--grn)}.tp.s{color:var(--red)}.tp.spk{color:var(--ylw)}
+.tq{color:var(--mut);text-align:right}.tl{color:var(--mut);text-align:right;font-size:10px}.tl.sl2{color:var(--red)}
+.spike-tag{font-size:9px;color:var(--ylw);text-align:right;grid-column:1/-1;padding:0 0 3px 0;opacity:.8}
+#ld{position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .4s}
+#ld.hide{opacity:0;pointer-events:none}
+.ll{font-size:40px;font-weight:900;color:var(--acc);letter-spacing:3px}
+.lb2{width:180px;height:2px;background:var(--brd);border-radius:2px;overflow:hidden}
+.lf{height:100%;background:var(--acc);animation:fill 1.5s ease forwards}
+@keyframes fill{from{width:0}to{width:100%}}
+.lt{font-size:10px;color:var(--mut);letter-spacing:2px}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(50px);background:var(--red);color:#fff;padding:7px 16px;border-radius:5px;font-size:12px;z-index:200;transition:transform .3s}
+#toast.sh{transform:translateX(-50%) translateY(0)}
+#event-bar{padding:6px 16px;font-size:11px;background:rgba(255,209,102,.08);border-bottom:1px solid rgba(255,209,102,.2);color:var(--ylw);min-height:28px;display:flex;align-items:center;gap:8px;transition:opacity .5s}
+#event-bar.empty{opacity:.3;color:var(--mut)}
+.ev-dot{width:6px;height:6px;border-radius:50%;background:var(--ylw);flex-shrink:0}
+</style>
+</head>
+<body>
+<div id="ld"><div class="ll">KERNO</div><div class="lb2"><div class="lf"></div></div><div class="lt">CONNECTING TO MARKET FEED...</div></div>
+<div id="toast">API not reachable</div>
+<header>
+  <div class="logo"><div class="dot"></div>KERNO</div>
+  <div style="display:flex;align-items:center;gap:18px">
+    <div class="tabs">
+      <button class="tab on" onclick="sw('BTCUSDT',this)">BTC/USDT</button>
+      <button class="tab"    onclick="sw('ETHUSDT',this)">ETH/USDT</button>
+    </div>
+    <div class="live"><div class="ldot"></div>LIVE</div>
+  </div>
+</header>
+<div class="mbar">
+  <div class="mc"><div class="ml">Last Price</div><div class="mv" id="mp">-</div><div class="ms" id="mc2">-</div></div>
+  <div class="mc"><div class="ml">Avg Latency</div><div class="mv" id="ml2">-</div><div class="ms">ms delay</div></div>
+  <div class="mc"><div class="ml">Max Latency</div><div class="mv" id="mm">-</div><div class="ms">ms worst</div></div>
+  <div class="mc"><div class="ml">Trades/min</div><div class="mv" id="mt">-</div><div class="ms">last min</div></div>
+  <div class="mc"><div class="ml">Spikes</div><div class="mv" id="msk" style="color:var(--ylw)">0</div><div class="ms">last 5 min</div></div>
+  <div class="mc"><div class="ml">Volume</div><div class="mv" id="mv2">-</div><div class="ms">last min</div></div>
+</div>
+<div id="event-bar" class="empty"><div class="ev-dot"></div><span id="ev-txt">No anomalies detected</span></div>
+<div class="main">
+  <div class="cp">
+    <div class="ph">
+      <div class="pt">Price Timeline <span id="cr">last 5 min</span></div>
+      <div class="btns">
+        <button class="btn on" onclick="sw2(5,this)">5m</button>
+        <button class="btn"    onclick="sw2(15,this)">15m</button>
+        <button class="btn"    onclick="sw2(60,this)">1h</button>
+      </div>
+    </div>
+    <div class="cw"><canvas id="pc"></canvas></div>
+    <div class="ls"><div class="sl">Feed Latency - last 60 events</div><div id="lb"></div></div>
+  </div>
+  <div class="fp">
+    <div class="ph"><div class="pt">Live Trades</div></div>
+    <div class="fh"><div>Price</div><div class="fr">Qty</div><div class="fr">Lat</div></div>
+    <div id="tf"></div>
+  </div>
+</div>
+<script>
+var API='http://localhost:8000',sym='BTCUSDT',mins=5,prev=null,ch=null;
+var SPIKE_THRESH=0.05;
+
+function ic(){
+  var ctx=document.getElementById('pc').getContext('2d');
+  ch=new Chart(ctx,{
+    type:'line',
+    data:{labels:[],datasets:[
+      {data:[],borderColor:'#00e5ff',backgroundColor:'rgba(0,229,255,0.07)',borderWidth:2,pointRadius:0,tension:0.3,fill:true,label:'price'},
+      {data:[],borderColor:'transparent',backgroundColor:'transparent',pointRadius:6,pointBackgroundColor:'#ffd166',pointBorderColor:'#ffd166',pointHoverRadius:8,showLine:false,label:'spikes'}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          mode:'index',intersect:false,
+          backgroundColor:'#0d1218',borderColor:'#1a2230',borderWidth:1,
+          titleColor:'#4a5a70',bodyColor:'#e2eaf4',
+          callbacks:{
+            label:function(c){
+              if(c.datasetIndex===0)return ' $'+c.parsed.y.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+              if(c.datasetIndex===1&&c.parsed.y!==null)return ' SPIKE: '+c.raw.note;
+              return null;
+            }
+          }
+        },
+        annotation:{annotations:{}}
+      },
+      scales:{
+        x:{ticks:{color:'#4a5a70',maxTicksLimit:7,font:{size:10}},grid:{color:'#1a2230'}},
+        y:{ticks:{color:'#4a5a70',font:{size:10},callback:function(v){return '$'+v.toLocaleString()}},grid:{color:'#1a2230'},position:'right'}
+      },
+      interaction:{mode:'nearest',axis:'x',intersect:false}
+    }
+  });
+}
+
+function detectSpikes(data){
+  var spikes=[];
+  if(data.length<3)return spikes;
+  var prices=data.map(function(d){return d.price});
+  var diffs=[];
+  for(var i=1;i<prices.length;i++)diffs.push(Math.abs(prices[i]-prices[i-1]));
+  var avg=diffs.reduce(function(a,b){return a+b},0)/diffs.length;
+  var std=Math.sqrt(diffs.map(function(d){return Math.pow(d-avg,2)}).reduce(function(a,b){return a+b},0)/diffs.length);
+  var threshold=Math.max(avg+2*std, avg*2, SPIKE_THRESH);
+  for(var i=1;i<data.length;i++){
+    var diff=Math.abs(data[i].price-data[i-1].price);
+    var pct=(diff/data[i-1].price)*100;
+    if(diff>threshold&&pct>0.01){
+      spikes.push({idx:i,price:data[i].price,diff:diff,pct:pct,time:data[i].event_time_ms,lat:Math.abs(data[i].latency_ms)});
+    }
+  }
+  return spikes;
+}
+
+function uc(ev){
+  if(!ev.length)return;
+  var cut=Date.now()-mins*60000;
+  var f=ev.filter(function(e){return e.event_time_ms>=cut}).sort(function(a,b){return a.event_time_ms-b.event_time_ms});
+  var s=Math.max(1,Math.floor(f.length/200));
+  var d=f.filter(function(_,i){return i%s===0});
+
+  var spikes=detectSpikes(d);
+  var spikeMap={};
+  spikes.forEach(function(sp){spikeMap[sp.idx]=sp});
+
+  var labels=d.map(function(e){var dt=new Date(e.event_time_ms);return ('0'+dt.getHours()).slice(-2)+':'+('0'+dt.getMinutes()).slice(-2)+':'+('0'+dt.getSeconds()).slice(-2)});
+  var prices=d.map(function(e){return e.price});
+  var spikeData=d.map(function(e,i){
+    if(spikeMap[i]){var sp=spikeMap[i];return {x:labels[i],y:e.price,note:(sp.diff>=0?'+':'-')+(sp.pct.toFixed(3))+'% in '+sp.lat+'ms'}}
+    return {x:labels[i],y:null}
+  });
+
+  ch.data.labels=labels;
+  ch.data.datasets[0].data=prices;
+  ch.data.datasets[1].data=spikeData;
+  ch.update('none');
+
+  document.getElementById('msk').textContent=spikes.length;
+  if(spikes.length>0){
+    var last=spikes[spikes.length-1];
+    var dir=last.diff>=0?'+':'-';
+    var eb=document.getElementById('event-bar');
+    eb.classList.remove('empty');
+    document.getElementById('ev-txt').textContent='Price moved '+dir+last.pct.toFixed(3)+'% in '+last.lat+'ms — above normal range';
+  }
+}
+
+async function fe(){var r=await fetch(API+'/events?symbol='+sym+'&limit=300');return r.json()}
+async function fm(){var r=await fetch(API+'/metrics?symbol='+sym+'&minutes='+mins);return r.json()}
+
+function um(ev,mx){
+  if(ev.length){
+    var p=ev[0].price;
+    var el=document.getElementById('mp');
+    el.textContent=p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    if(prev!==null){var d=p-prev;var pc=(d/prev*100).toFixed(3);document.getElementById('mc2').textContent=(d>=0?'+':'')+pc+'%';el.className='mv '+(d>=0?'up':'dn')}
+    prev=p;
+    var ls=ev.slice(0,60).map(function(e){return Math.abs(e.latency_ms)});
+    var avg=Math.round(ls.reduce(function(a,b){return a+b},0)/ls.length);
+    document.getElementById('ml2').textContent=avg;
+    document.getElementById('mm').textContent=Math.max.apply(null,ls);
+    ulb(ls);
+  }
+  if(mx.length){var m=mx[0];document.getElementById('mt').textContent=m.trade_count.toLocaleString();document.getElementById('mv2').textContent=m.volume.toFixed(3)}
+}
+
+function ulb(ls){
+  var mx=Math.max.apply(null,ls)||1;
+  document.getElementById('lb').innerHTML=ls.map(function(l){var h=Math.max(3,Math.round(l/mx*34));return '<div class="lbar'+(l>300?' hi':'')+'" style="height:'+h+'px"></div>'}).join('');
+}
+
+function uf(ev){
+  if(!ev.length)return;
+  var prices=ev.map(function(e){return e.price});
+  var diffs=[];
+  for(var i=1;i<prices.length;i++)diffs.push(Math.abs(prices[i]-prices[i-1]));
+  var avg=diffs.length?diffs.reduce(function(a,b){return a+b},0)/diffs.length:0;
+  var std=diffs.length?Math.sqrt(diffs.map(function(d){return Math.pow(d-avg,2)}).reduce(function(a,b){return a+b},0)/diffs.length):0;
+  var threshold=Math.max(avg+2*std,0.01);
+
+  document.getElementById('tf').innerHTML=ev.slice(0,80).map(function(e,i){
+    var si=e.is_buyer_maker?'s':'b';
+    var lt=Math.abs(e.latency_ms);
+    var isSpike=i>0&&Math.abs(e.price-ev[i-1].price)>threshold;
+    var pct=i>0?((e.price-ev[i-1].price)/ev[i-1].price*100).toFixed(3):null;
+    var rowClass=isSpike?'tr spike-row':'tr';
+    var priceClass=isSpike?'tp spk':'tp '+si;
+    var tag=isSpike?'<div class="spike-tag">SPIKE '+(pct>=0?'+':'')+pct+'%</div>':'';
+    return '<div class="'+rowClass+'"><div class="'+priceClass+'">'+e.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="tq">'+e.quantity.toFixed(5)+'</div><div class="tl'+(lt>300?' sl2':'')+' ">'+lt+'</div>'+tag+'</div>';
+  }).join('');
+}
+
+function sw(s,b){sym=s;prev=null;document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on')});b.classList.add('on');rf()}
+function sw2(m,b){mins=m;document.querySelectorAll('.btn').forEach(function(x){x.classList.remove('on')});b.classList.add('on');document.getElementById('cr').textContent='last '+m+' min';rf()}
+
+async function rf(){
+  try{
+    var r=await Promise.all([fe(),fm()]);
+    uc(r[0]);um(r[0],r[1]);uf(r[0]);
+  }catch(e){var t=document.getElementById('toast');t.classList.add('sh');setTimeout(function(){t.classList.remove('sh')},3000)}
+}
+
+async function boot(){ic();await rf();document.getElementById('ld').classList.add('hide');setInterval(rf,2000)}
+boot();
+</script>
+</body>
+</html>
