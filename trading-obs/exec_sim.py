@@ -1,105 +1,52 @@
-﻿import sys, sqlite3, os
-sys.path.insert(0, ".")
-import backtester as bt
+﻿import sqlite3, datetime
 
-DB_PATH = "kerno.db"
-FEE = 0.001
-SLIPPAGE = 0.0005
-LOOKAHEAD = 10
+conn = sqlite3.connect('kerno.db')
 
-def build_candles(symbol, interval_seconds=1, limit=50000):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("""
-        SELECT price, quantity, event_time_ms
-        FROM market_events WHERE symbol=? AND event_type='trade'
-        ORDER BY event_time_ms ASC LIMIT ?
-    """, (symbol, limit)).fetchall()
-    conn.close()
-    candles = {}
-    for r in rows:
-        b = (r["event_time_ms"] // (interval_seconds*1000)) * (interval_seconds*1000)
-        if b not in candles:
-            candles[b] = {"open":r["price"],"high":r["price"],"low":r["price"],"close":r["price"],"volume":0,"time_ms":b}
-        c = candles[b]
-        c["high"]   = max(c["high"], r["price"])
-        c["low"]    = min(c["low"],  r["price"])
-        c["close"]  = r["price"]
-        c["volume"] += r["quantity"]
-    return [v for k,v in sorted(candles.items())]
+# Buscar ventanas con spikes reales en el historico
+rows = conn.execute("""
+    SELECT price, event_time_ms FROM market_events
+    WHERE symbol='BTCUSDT'
+    ORDER BY event_time_ms ASC
+""").fetchall()
 
-def percentile(data, p):
-    s = sorted(data)
-    return s[min(int(len(s)*p/100), len(s)-1)]
+spikes = []
+for i in range(1, len(rows)):
+    p0, t0 = rows[i-1]
+    p1, t1 = rows[i]
+    if p0 > 0:
+        move = abs(p1 - p0) / p0 * 100
+        if move >= 0.005:  # solo moves reales
+            spikes.append((t0, p0, p1, move))
 
-def simulate(symbol, candles):
-    moves = [abs(c["close"]-c["open"])/c["open"]*100 for c in candles if c["open"]>0]
-    if len(moves) < 50: return
+print(f"Spikes reales (>= 0.005%) en historico: {len(spikes)}")
+if spikes:
+    wins, losses = 0, 0
+    for t0, p0, p1, move in spikes[:200]:
+        # Simular costo de ejecucion: spread estimado 0.001% + fee 0.04% Binance taker
+        cost = p0 * (0.00001 + 0.0004)
+        # Si es REV_EDGE: apostamos a que baja
+        # Buscamos precio 10s despues
+        target_ms = t0 + 10000
+        future = conn.execute("""
+            SELECT price FROM market_events
+            WHERE symbol='BTCUSDT' AND event_time_ms >= ?
+            ORDER BY event_time_ms ASC LIMIT 1
+        """, (target_ms,)).fetchone()
+        if future:
+            pf = future[0]
+            raw_move = p1 - pf  # queremos que baje (REV)
+            net = raw_move - cost
+            if net > 0:
+                wins += 1
+            else:
+                losses += 1
 
-    p75 = percentile(moves, 75)
-    p90 = percentile(moves, 90)
-    p99 = percentile(moves, 99)
+    total = wins + losses
+    print(f"Execution-aware WIN rate (10s, REV): {wins}/{total} = {round(wins/total*100,1) if total else 0}%")
+    print(f"Spread+fee estimado por trade: ~0.041%")
 
-    edge_map = {
-        "BTCUSDT": {"MEDIUM": ("REV", 0.66), "LARGE": ("CONT", 0.72)},
-        "ETHUSDT": {"SMALL":  ("REV", 0.61), "LARGE": ("CONT", 0.60), "EXTREME": ("CONT", 0.75)},
-    }
-    edges = edge_map.get(symbol, {})
+    ts = datetime.datetime.fromtimestamp(spikes[0][0]/1000).strftime('%H:%M:%S')
+    ts2 = datetime.datetime.fromtimestamp(spikes[-1][0]/1000).strftime('%H:%M:%S')
+    print(f"Rango analizado: {ts} → {ts2}")
 
-    trades = []
-    for i, c in enumerate(candles):
-        if i+LOOKAHEAD >= len(candles) or c["open"] <= 0: continue
-        body  = (c["close"]-c["open"])/c["open"]*100
-        move  = abs(body)
-
-        if move < p75:    bucket = "SMALL"
-        elif move < p90:  bucket = "MEDIUM"
-        elif move < p99:  bucket = "LARGE"
-        else:             bucket = "EXTREME"
-
-        if bucket not in edges: continue
-        direction, prob = edges[bucket]
-        if prob < 0.60: continue
-
-        entry_dir = ("long" if body > 0 else "short") if direction == "CONT" else ("short" if body > 0 else "long")
-        entry = c["close"] * (1 + SLIPPAGE if entry_dir == "long" else 1 - SLIPPAGE)
-        exit_p = candles[i+LOOKAHEAD]["close"] * (1 - SLIPPAGE if entry_dir == "long" else 1 + SLIPPAGE)
-
-        raw = (exit_p-entry)/entry*100 if entry_dir == "long" else (entry-exit_p)/entry*100
-        net = raw - 2*FEE*100
-        trades.append({"bucket":bucket, "net":net, "win":net>0})
-
-    if not trades:
-        print(f"\n{symbol}: sin trades"); return
-
-    wins  = sum(1 for t in trades if t["win"])
-    total = sum(t["net"] for t in trades)
-    wr    = round(wins/len(trades)*100, 1)
-    avg   = round(total/len(trades), 4)
-
-    cum, peak, dd = 0, 0, 0
-    for t in trades:
-        cum += t["net"]
-        peak = max(peak, cum)
-        dd   = max(dd, peak-cum)
-
-    print(f"\n=== EXECUTION SIMULATOR — {symbol} ===")
-    print(f"Fee: {FEE*100}% | Slippage: {SLIPPAGE*100}% cada lado")
-    print(f"Trades   : {len(trades)}")
-    print(f"Win rate : {wr}%")
-    print(f"Total PnL: {round(total,4)}%")
-    print(f"Avg/trade: {avg}%")
-    print(f"Max DD   : -{round(dd,4)}%")
-    print("")
-    if total > 0 and wr > 50:
-        print("VEREDICTO: SOBREVIVE COSTOS — edge real potencial")
-    elif total > 0:
-        print("VEREDICTO: PnL positivo — win rate bajo, ajustar")
-    else:
-        print("VEREDICTO: NO sobrevive costos — fees matan el edge")
-
-btc = build_candles("BTCUSDT")
-eth = build_candles("ETHUSDT")
-print(f"BTC: {len(btc)} velas | ETH: {len(eth)} velas")
-simulate("BTCUSDT", btc)
-simulate("ETHUSDT", eth)
+conn.close()
