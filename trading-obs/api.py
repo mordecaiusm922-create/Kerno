@@ -1,35 +1,115 @@
-"""
-Kerno API — FastAPI + SQLite
-"""
-import os
-import time
-from datetime import datetime, timezone
-from typing import Annotated
-
+﻿from pydantic import BaseModel
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from typing import Annotated
+from datetime import datetime, timezone
+import sqlite3, os, time, threading
 
-from db.connection import get_conn, init_db
+DB_PATH = os.getenv("DB_PATH", "kerno.db")
 
-app = FastAPI(title="Kerno", version="0.1.0")
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Kerno")
 
+# ── Spike Intelligence Layer ──────────────────────────────
+_EDGE_MAP = {
+    "BTCUSDT": {
+        "SMALL":   ("REV_EDGE",  0.63, 0.37),
+        "MEDIUM":  ("REV_EDGE",  0.73, 0.27),
+        "EXTREME": ("CONT_EDGE", 0.13, 0.87),
+    },
+    "ETHUSDT": {
+        "LARGE":   ("CONT_EDGE", 0.30, 0.70),
+        "EXTREME": ("CONT_EDGE", 0.29, 0.71),
+    },
+}
+_pct_cache    = {}
+_streak_cache = {}
 
+def _get_percentiles(symbol):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT price, event_time_ms FROM market_events
+        WHERE symbol=? AND event_type='trade'
+        ORDER BY event_time_ms DESC LIMIT 10000
+    """, (symbol,)).fetchall()
+    conn.close()
+    candles = {}
+    for price, ts in rows:
+        b = (ts // 1000) * 1000
+        if b not in candles:
+            candles[b] = {"open": price, "close": price}
+        candles[b]["close"] = price
+    moves = [abs(c["close"]-c["open"])/c["open"]*100 for c in candles.values() if c["open"]>0]
+    if len(moves) < 20:
+        return None
+    s = sorted(moves)
+    return {"p75": s[int(len(s)*0.75)], "p90": s[int(len(s)*0.90)], "p99": s[int(len(s)*0.99)]}
+
+def _classify(symbol, change_pct):
+    global _pct_cache, _streak_cache
+    BASE_CONF = {"SMALL": 0.35, "MEDIUM": 0.62, "LARGE": 0.80, "EXTREME": 0.92}
+    if symbol not in _pct_cache:
+        _pct_cache[symbol] = _get_percentiles(symbol)
+    p = _pct_cache.get(symbol)
+    if not p:
+        return {"signal": "NO_DATA", "classification": "UNKNOWN",
+                "prob_reversal": 0.5, "prob_continuation": 0.5, "confidence": 0.0}
+    m = abs(change_pct)
+    if   m < p["p75"]:  bucket = "SMALL"
+    elif m < p["p90"]:  bucket = "MEDIUM"
+    elif m < p["p99"]:  bucket = "LARGE"
+    else:               bucket = "EXTREME"
+    edges = _EDGE_MAP.get(symbol, {})
+    if bucket in edges:
+        signal, prob_rev, prob_cont = edges[bucket]
+    else:
+        signal, prob_rev, prob_cont = "NO_EDGE", 0.5, 0.5
+    sc = _streak_cache.get(symbol, {"signal": None, "count": 0})
+    if sc["signal"] == signal:
+        sc["count"] = min(sc["count"] + 1, 10)
+    else:
+        sc = {"signal": signal, "count": 1}
+    _streak_cache[symbol] = sc
+    streak_bonus = min((sc["count"] - 1) * 0.04, 0.15)
+    base = BASE_CONF.get(bucket, 0.35)
+    confidence = round(min(base + streak_bonus, 1.0), 3)
+    cls = signal + "_" + bucket if signal != "NO_EDGE" else "NOISE_" + bucket
+    return {
+        "signal": signal, "classification": cls, "bucket": bucket,
+        "prob_reversal": prob_rev, "prob_continuation": prob_cont,
+        "confidence": confidence,
+    }
+
+# ── Startup ───────────────────────────────────────────────
 @app.on_event("startup")
-def startup():
-    init_db()
+def on_startup():
+    conn = get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS signal_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT, signal TEXT, bucket TEXT,
+            confidence REAL, price_entry REAL,
+            event_time_ms INTEGER,
+            price_10s REAL, price_30s REAL,
+            result_10s TEXT DEFAULT 'PENDING',
+            result_30s TEXT DEFAULT 'PENDING'
+        )
+    """)
+    conn.commit()
+    conn.close()
+    print("[DB] Kerno inicializado en kerno.db")
+    from validator import validator_loop
+    t = threading.Thread(target=validator_loop, daemon=True)
+    t.start()
+    print("[validator] thread iniciado")
 
-
-# ── Models ────────────────────────────────────────────────────────────────────
+# ── Models ────────────────────────────────────────────────
 class TradeEvent(BaseModel):
     id:             int
     symbol:         str
@@ -40,7 +120,8 @@ class TradeEvent(BaseModel):
     latency_ms:     int
     is_buyer_maker: bool | None
     trade_id:       int | None
-
+    spike_pct:      float | None = None
+    intelligence:   dict | None = None
 
 class Metrics(BaseModel):
     bucket_ms:      int
@@ -52,12 +133,10 @@ class Metrics(BaseModel):
     price_high:     float
     volume:         float
 
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoints ─────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok", "product": "Kerno", "ts": datetime.now(timezone.utc)}
-
 
 @app.get("/events", response_model=list[TradeEvent])
 def get_events(
@@ -65,52 +144,67 @@ def get_events(
     limit:  Annotated[int, Query(ge=1, le=1000)] = 100,
 ):
     conn = get_conn()
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT id, symbol, price, quantity,
                event_time_ms, ingest_time_ms,
                (ingest_time_ms - event_time_ms) AS latency_ms,
                is_buyer_maker, trade_id
         FROM market_events
         WHERE symbol = ?
-        ORDER BY event_time_ms DESC
-        LIMIT ?
-        """,
-        (symbol.upper(), limit),
-    ).fetchall()
+        ORDER BY event_time_ms DESC LIMIT ?
+    """, (symbol.upper(), limit)).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
-
+    enriched = []
+    prev_price = None
+    for r in rows:
+        d = dict(r)
+        if prev_price and prev_price > 0:
+            change_pct = (d["price"] - prev_price) / prev_price * 100
+            d["spike_pct"] = round(change_pct, 6)
+            d["intelligence"] = _classify(d["symbol"], change_pct)
+        else:
+            d["spike_pct"] = 0.0
+            d["intelligence"] = {"signal": "NO_DATA", "confidence": 0.0}
+        prev_price = d["price"]
+        # Registrar señales con confidence > 0.50 para validacion
+        intel = d.get("intelligence", {})
+        if intel.get("confidence", 0) >= 0.62 and intel.get("bucket") in ("MEDIUM","LARGE","EXTREME") and intel.get("signal") not in ("NO_DATA", "NO_EDGE"):
+            try:
+                conn2 = get_conn()
+                conn2.execute("""
+                    INSERT INTO signal_outcomes
+                    (symbol, signal, bucket, confidence, price_entry, event_time_ms)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (d["symbol"], intel["signal"], intel.get("bucket",""),
+                      intel["confidence"], d["price"], d["event_time_ms"]))
+                conn2.commit()
+                conn2.close()
+            except Exception:
+                pass
+        enriched.append(d)
+    return enriched
 
 @app.get("/replay", response_model=list[TradeEvent])
 def replay(
-    from_ms:  Annotated[int, Query(alias="from")],
-    to_ms:    Annotated[int, Query(alias="to")],
-    symbol:   Annotated[str, Query()] = "BTCUSDT",
-    limit:    Annotated[int, Query(ge=1, le=5000)] = 500,
+    from_ms: Annotated[int, Query(alias="from")],
+    to_ms:   Annotated[int, Query(alias="to")],
+    symbol:  Annotated[str, Query()] = "BTCUSDT",
+    limit:   Annotated[int, Query(ge=1, le=5000)] = 500,
 ):
     if from_ms >= to_ms:
-        raise HTTPException(400, "'from' debe ser menor que 'to'")
-
+        raise HTTPException(400, "from debe ser menor que to")
     conn = get_conn()
-    rows = conn.execute(
-        """
+    rows = conn.execute("""
         SELECT id, symbol, price, quantity,
                event_time_ms, ingest_time_ms,
                (ingest_time_ms - event_time_ms) AS latency_ms,
                is_buyer_maker, trade_id
         FROM market_events
-        WHERE symbol        = ?
-          AND event_time_ms >= ?
-          AND event_time_ms <= ?
-        ORDER BY event_time_ms ASC
-        LIMIT ?
-        """,
-        (symbol.upper(), from_ms, to_ms, limit),
-    ).fetchall()
+        WHERE symbol=? AND event_time_ms>=? AND event_time_ms<=?
+        ORDER BY event_time_ms ASC LIMIT ?
+    """, (symbol.upper(), from_ms, to_ms, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 @app.get("/metrics", response_model=list[Metrics])
 def get_metrics(
@@ -118,133 +212,80 @@ def get_metrics(
     minutes: Annotated[int, Query(ge=1, le=1440)] = 60,
 ):
     since_ms = int((time.time() - minutes * 60) * 1000)
-
     conn = get_conn()
-    rows = conn.execute(
-        """
-        SELECT
-            (event_time_ms / 60000) * 60000         AS bucket_ms,
-            symbol,
-            COUNT(*)                                 AS trade_count,
-            AVG(ingest_time_ms - event_time_ms)      AS avg_latency_ms,
-            MAX(ingest_time_ms - event_time_ms)      AS max_latency_ms,
-            MIN(price)                               AS price_low,
-            MAX(price)                               AS price_high,
-            SUM(quantity)                            AS volume
+    rows = conn.execute("""
+        SELECT (event_time_ms/60000)*60000 AS bucket_ms, symbol,
+               COUNT(*) AS trade_count,
+               AVG(ingest_time_ms-event_time_ms) AS avg_latency_ms,
+               MAX(ingest_time_ms-event_time_ms) AS max_latency_ms,
+               MIN(price) AS price_low, MAX(price) AS price_high,
+               SUM(quantity) AS volume
         FROM market_events
-        WHERE symbol       = ?
-          AND event_type   = 'trade'
-          AND event_time_ms >= ?
-        GROUP BY bucket_ms, symbol
-        ORDER BY bucket_ms DESC
-        """,
-        (symbol.upper(), since_ms),
-    ).fetchall()
+        WHERE symbol=? AND event_type='trade' AND event_time_ms>=?
+        GROUP BY bucket_ms, symbol ORDER BY bucket_ms DESC
+    """, (symbol.upper(), since_ms)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-
-# ── Serve frontend ────────────────────────────────────────────────────────────
-_frontend = os.path.join(os.path.dirname(__file__), "frontend")
-
-if os.path.isdir(_frontend):
-    app.mount("/static", StaticFiles(directory=_frontend), name="static")
-
-    @app.get("/", include_in_schema=False)
-    def serve_ui():
-        return FileResponse(os.path.join(_frontend, "index.html"))
-
-
-# ── Backtest endpoint ─────────────────────────────────────────────────────────
-import sys as _sys
-import importlib.util as _ilu
-
-def _load_backtester():
-    p = os.path.join(os.path.dirname(__file__), "backtester.py")
-    spec = _ilu.spec_from_file_location("backtester", p)
-    mod  = _ilu.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-class BacktestResult(BaseModel):
-    symbol:            str
-    events_loaded:     int
-    spikes_detected:   int
-    trades_executed:   int
-    win_rate_pct:      float | None
-    total_pnl_pct:     float | None
-    avg_pnl_pct:       float | None
-    best_trade_pct:    float | None
-    worst_trade_pct:   float | None
-    max_drawdown_pct:  float | None
-    profit_factor:     float | None
-    avg_hold_sec:      float | None
-    avg_entry_latency_ms: float | None
-    verdict:           str
-
-@app.get("/backtest", response_model=BacktestResult)
-def run_backtest_endpoint(
-    symbol:    Annotated[str,   Query()] = "BTCUSDT",
-    hold:      Annotated[int,   Query(ge=5, le=300)] = 30,
-    z:         Annotated[float, Query(ge=1.0, le=5.0)] = 2.0,
-    min_spike: Annotated[float, Query(ge=0.001, le=1.0)] = 0.01,
-    limit:     Annotated[int,   Query(ge=100, le=50000)] = 10000,
-    save:      Annotated[bool,  Query()] = True,
+@app.get("/signals")
+def get_signals(
+    symbol:         Annotated[str,   Query()] = "BTCUSDT",
+    min_confidence: Annotated[float, Query()] = 0.60,
+    limit:          Annotated[int,   Query(ge=1, le=200)] = 50,
 ):
-    """
-    Corre backtest sobre datos historicos en kerno.db.
-    Estrategia: spike-follow — entra en direccion del spike, sale despues de hold segundos.
-    """
-    bt = _load_backtester()
-    events = bt.load_events(symbol, limit)
-    if len(events) < 20:
-        raise HTTPException(400, f"Pocos datos: {len(events)} eventos. Deja el ingestor correr mas tiempo.")
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, symbol, price, quantity,
+               event_time_ms, ingest_time_ms,
+               (ingest_time_ms-event_time_ms) AS latency_ms,
+               is_buyer_maker, trade_id
+        FROM market_events WHERE symbol=?
+        ORDER BY event_time_ms DESC LIMIT 500
+    """, (symbol.upper(),)).fetchall()
+    conn.close()
+    results = []
+    prev_price = None
+    for r in rows:
+        d = dict(r)
+        if prev_price and prev_price > 0:
+            change_pct = (d["price"] - prev_price) / prev_price * 100
+            intel = _classify(d["symbol"], change_pct)
+            d["spike_pct"] = round(change_pct, 6)
+            d["intelligence"] = intel
+        else:
+            d["spike_pct"] = 0.0
+            d["intelligence"] = {"signal": "NO_DATA", "confidence": 0.0}
+        prev_price = d["price"]
+        conf = d["intelligence"].get("confidence", 0)
+        sig  = d["intelligence"].get("signal", "NO_DATA")
+        if conf >= min_confidence and sig not in ("NO_DATA", "NO_EDGE"):
+            results.append(d)
+        if len(results) >= limit:
+            break
+    return results
 
-    spikes = bt.detect_spikes(events, z_threshold=z, min_pct=min_spike)
-    trades = bt.run_backtest(events, spikes, hold_seconds=hold)
-    stats  = bt.compute_stats(trades)
+@app.get("/accuracy")
+def get_accuracy(symbol: Annotated[str, Query()] = "BTCUSDT"):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT signal, result_10s, result_30s, confidence
+        FROM signal_outcomes WHERE symbol=?
+        ORDER BY event_time_ms DESC LIMIT 500
+    """, (symbol.upper(),)).fetchall()
+    conn.close()
+    total = len(rows)
+    if total == 0:
+        return {"total": 0, "win_rate_10s": None, "win_rate_30s": None, "validated": 0}
+    wins_10   = sum(1 for r in rows if r[1] == "WIN")
+    wins_30   = sum(1 for r in rows if r[2] == "WIN")
+    validated = sum(1 for r in rows if r[1] != "PENDING")
+    return {
+        "total": total, "validated": validated,
+        "win_rate_10s": round(wins_10/validated*100,1) if validated else None,
+        "win_rate_30s": round(wins_30/validated*100,1) if validated else None,
+        "avg_confidence": round(sum(r[3] for r in rows)/total, 3),
+    }
 
-    params = {"symbol": symbol, "events_loaded": len(events),
-              "spikes_detected": len(spikes), "hold_seconds": hold,
-              "z_threshold": z, "min_spike_pct": min_spike}
-
-    if save and stats:
-        bt.save_results(symbol, params, stats, trades)
-
-    if not stats:
-        return BacktestResult(
-            symbol=symbol, events_loaded=len(events),
-            spikes_detected=len(spikes), trades_executed=0,
-            win_rate_pct=None, total_pnl_pct=None, avg_pnl_pct=None,
-            best_trade_pct=None, worst_trade_pct=None, max_drawdown_pct=None,
-            profit_factor=None, avg_hold_sec=None, avg_entry_latency_ms=None,
-            verdict="Sin trades — aumenta el tiempo de captura o reduce z-threshold"
-        )
-
-    wr  = stats["win_rate_pct"]
-    pnl = stats["total_pnl_pct"]
-    if wr >= 55 and pnl > 0:
-        verdict = "EDGE DETECTADO — estrategia tiene valor estadistico"
-    elif pnl > 0:
-        verdict = "PnL positivo — ajustar parametros para mejorar win rate"
-    elif wr >= 50:
-        verdict = "Win rate ok pero fees matan PnL — reducir hold time"
-    else:
-        verdict = "Sin edge — spike-follow no funciona en este periodo"
-
-    return BacktestResult(
-        symbol=symbol,
-        events_loaded=len(events),
-        spikes_detected=len(spikes),
-        trades_executed=stats["total_trades"],
-        win_rate_pct=stats["win_rate_pct"],
-        total_pnl_pct=stats["total_pnl_pct"],
-        avg_pnl_pct=stats["avg_pnl_pct"],
-        best_trade_pct=stats["best_trade_pct"],
-        worst_trade_pct=stats["worst_trade_pct"],
-        max_drawdown_pct=stats["max_drawdown_pct"],
-        profit_factor=stats["profit_factor"],
-        avg_hold_sec=stats["avg_hold_sec"],
-        avg_entry_latency_ms=stats["avg_entry_latency_ms"],
-        verdict=verdict,
-    )
+@app.get("/dashboard", response_class=HTMLResponse)
+def get_dashboard():
+    return open("dashboard.html", encoding="utf-8").read()

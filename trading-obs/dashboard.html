@@ -1,0 +1,462 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kerno — Precision Intelligence</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#05050a;--bg2:#0a0a12;--bg3:#0f0f18;--bg4:#13131e;
+  --border:#16162a;--border2:#1e1e35;
+  --green:#00e676;--green2:rgba(0,230,118,0.12);--green3:rgba(0,230,118,0.04);
+  --red:#ff1744;--red2:rgba(255,23,68,0.12);--red3:rgba(255,23,68,0.04);
+  --yellow:#ffd600;--blue:#448aff;
+  --dim:#1e1e35;--muted:#3a3a5c;--muted2:#555580;
+  --text:#b8b8d8;--text2:#7070a0;
+}
+body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+.logo{display:flex;align-items:center;gap:12px}
+.logo svg{width:22px;height:22px}
+.logo-text{font-size:13px;font-weight:700;letter-spacing:5px;color:#fff}
+.logo-sub{font-size:9px;color:var(--muted2);letter-spacing:3px;margin-top:2px}
+.header-right{display:flex;align-items:center;gap:20px}
+.live-badge{display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid rgba(0,230,118,0.2);border-radius:3px;background:rgba(0,230,118,0.04)}
+.live-dot{width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 8px var(--green);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.live-text{font-size:9px;letter-spacing:2px;color:var(--green)}
+#clock{font-size:11px;color:var(--muted2)}
+
+/* METRIC BAR */
+.metrics{display:grid;grid-template-columns:repeat(8,1fr);background:var(--border);gap:1px;flex-shrink:0}
+.metric{background:var(--bg2);padding:10px 16px;display:flex;flex-direction:column;gap:4px}
+.metric-label{font-size:8px;letter-spacing:2px;color:var(--muted2);text-transform:uppercase}
+.metric-value{font-size:20px;font-weight:700;line-height:1}
+.metric-sub{font-size:9px;color:var(--muted2)}
+.m-rev .metric-value{color:var(--red);text-shadow:0 0 16px rgba(255,23,68,.35)}
+.m-cont .metric-value{color:var(--green);text-shadow:0 0 16px rgba(0,230,118,.35)}
+.m-acc .metric-value{color:var(--yellow);text-shadow:0 0 16px rgba(255,214,0,.3)}
+.m-conf .metric-value{color:var(--blue);text-shadow:0 0 16px rgba(68,138,255,.3)}
+.m-dim .metric-value{color:var(--muted)}
+.m-price .metric-value{color:#fff;font-size:16px}
+.chg-up{color:var(--green)!important}
+.chg-dn{color:var(--red)!important}
+
+/* WIN RATE BAR */
+.winbar-wrap{height:3px;background:var(--dim);border-radius:2px;margin-top:4px;overflow:hidden}
+.winbar{height:100%;background:var(--yellow);border-radius:2px;transition:width .6s}
+
+/* MAIN GRID */
+.main{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:220px 1fr;gap:1px;background:var(--border);flex:1;overflow:hidden}
+
+/* CHART */
+.chart-panel{background:var(--bg2);padding:14px 18px 8px;display:flex;flex-direction:column;overflow:hidden}
+.panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0}
+.panel-sym{font-size:10px;font-weight:700;letter-spacing:3px;color:var(--text2)}
+.panel-price{font-size:18px;font-weight:700;color:#fff}
+.panel-chg{font-size:10px;margin-left:6px}
+.chart-legend{display:flex;gap:14px;margin-top:4px}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--muted2)}
+.legend-dot{width:8px;height:8px;border-radius:50%}
+canvas{flex:1;min-height:0}
+
+/* CONFIDENCE THRESHOLD TOGGLE */
+.threshold-bar{display:flex;align-items:center;gap:8px;padding:0 18px 8px;flex-shrink:0}
+.thr-label{font-size:9px;color:var(--muted2);letter-spacing:1px}
+.thr-btn{padding:3px 8px;font-size:9px;font-family:inherit;border:1px solid var(--border2);background:var(--bg3);color:var(--muted2);cursor:pointer;border-radius:2px;transition:all .15s;letter-spacing:1px}
+.thr-btn.active{border-color:var(--blue);color:var(--blue);background:rgba(68,138,255,.08)}
+
+/* FEED */
+.feed-panel{background:var(--bg3);display:flex;flex-direction:column;overflow:hidden}
+.feed-head{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.feed-sym{font-size:9px;letter-spacing:3px;color:var(--muted2)}
+.feed-stats{display:flex;gap:12px}
+.feed-stat{font-size:9px;color:var(--muted2)}
+.feed-stat span{color:var(--text)}
+.feed-cols{display:grid;grid-template-columns:26px 80px 90px 140px 80px 54px;padding:5px 18px;font-size:8px;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--border);flex-shrink:0}
+.feed-body{overflow-y:auto;flex:1}
+.feed-body::-webkit-scrollbar{width:2px}
+.feed-body::-webkit-scrollbar-thumb{background:var(--dim)}
+
+/* EVENT ROW */
+.ev{display:grid;grid-template-columns:26px 80px 90px 140px 80px 54px;padding:4px 18px;font-size:11px;align-items:center;border-left:2px solid transparent;position:relative;overflow:hidden}
+.ev::after{content:'';position:absolute;inset:0;opacity:0;transition:opacity .15s}
+.ev:hover::after{opacity:1}
+.ev.REV_EDGE{border-left-color:var(--red);background:var(--red3)}
+.ev.REV_EDGE::after{background:rgba(255,23,68,.03)}
+.ev.CONT_EDGE{border-left-color:var(--green);background:var(--green3)}
+.ev.CONT_EDGE::after{background:rgba(0,230,118,.03)}
+.ev.NO_EDGE{border-left-color:var(--dim);opacity:.35}
+
+/* confidence dot */
+.conf-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+.ev-sig{font-weight:700;font-size:9px;letter-spacing:.5px}
+.REV_EDGE .ev-sig{color:var(--red)}
+.CONT_EDGE .ev-sig{color:var(--green)}
+.NO_EDGE .ev-sig{color:var(--muted)}
+
+.ev-price{color:#aaa;font-size:11px}
+.ev-class{color:var(--muted2);font-size:9px}
+.ev-prob{font-size:9px}
+.ev-prob .r{color:var(--red)}
+.ev-prob .c{color:var(--green)}
+.ev-conf{font-size:10px;font-weight:600}
+
+/* Result badge */
+.badge{display:inline-block;padding:1px 5px;border-radius:2px;font-size:8px;letter-spacing:1px}
+.badge.WIN{background:rgba(0,230,118,.15);color:var(--green)}
+.badge.LOSS{background:rgba(255,23,68,.15);color:var(--red)}
+.badge.PENDING{color:var(--muted);font-size:8px}
+
+/* flash animation */
+@keyframes flashRow{from{background:rgba(255,255,255,.05)}to{background:transparent}}
+.ev.flash{animation:flashRow .8s ease-out}
+
+/* FILTER MODE banner */
+.mode-banner{display:flex;align-items:center;justify-content:center;gap:8px;padding:5px;background:rgba(68,138,255,.06);border-bottom:1px solid rgba(68,138,255,.1);font-size:9px;color:var(--blue);letter-spacing:2px;flex-shrink:0}
+
+/* empty state */
+.empty{padding:40px;text-align:center;color:var(--muted);font-size:11px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none">
+      <polygon points="12,2 22,20 2,20" stroke="#00e676" stroke-width="1.5" fill="rgba(0,230,118,0.06)"/>
+      <line x1="12" y1="8" x2="12" y2="14" stroke="#00e676" stroke-width="1.5"/>
+      <circle cx="12" cy="17" r="1" fill="#00e676"/>
+    </svg>
+    <div>
+      <div class="logo-text">KERNO</div>
+      <div class="logo-sub">PRECISION INTELLIGENCE</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge"><div class="live-dot"></div><span class="live-text">LIVE</span></div>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="metrics">
+  <div class="metric m-rev">
+    <div class="metric-label">REV_EDGE · 5min</div>
+    <div class="metric-value" id="m-rev">—</div>
+    <div class="metric-sub">reversal signals</div>
+  </div>
+  <div class="metric m-cont">
+    <div class="metric-label">CONT_EDGE · 5min</div>
+    <div class="metric-value" id="m-cont">—</div>
+    <div class="metric-sub">continuation signals</div>
+  </div>
+  <div class="metric m-acc">
+    <div class="metric-label">WIN RATE · 10s</div>
+    <div class="metric-value" id="m-acc-btc">—</div>
+    <div class="winbar-wrap"><div class="winbar" id="winbar-btc" style="width:0%"></div></div>
+  </div>
+  <div class="metric m-acc">
+    <div class="metric-label">WIN RATE · 30s</div>
+    <div class="metric-value" id="m-acc-30">—</div>
+    <div class="metric-sub" id="m-validated">— validated</div>
+  </div>
+  <div class="metric m-conf">
+    <div class="metric-label">AVG CONFIDENCE</div>
+    <div class="metric-value" id="m-conf">—</div>
+    <div class="metric-sub">precision filter active</div>
+  </div>
+  <div class="metric m-dim">
+    <div class="metric-label">NOISE · 5min</div>
+    <div class="metric-value" id="m-noise">—</div>
+    <div class="metric-sub">filtered out</div>
+  </div>
+  <div class="metric m-price">
+    <div class="metric-label">BTC / USDT</div>
+    <div class="metric-value" id="m-btc-price">—</div>
+    <div class="metric-sub chg-up" id="m-btc-chg">—</div>
+  </div>
+  <div class="metric m-price">
+    <div class="metric-label">ETH / USDT</div>
+    <div class="metric-value" id="m-eth-price">—</div>
+    <div class="metric-sub chg-up" id="m-eth-chg">—</div>
+  </div>
+</div>
+
+<div class="main">
+
+  <div class="chart-panel">
+    <div class="panel-header">
+      <span class="panel-sym">BTCUSDT · LIVE</span>
+      <div><span class="panel-price" id="cp-btc">—</span><span class="panel-chg" id="cc-btc"></span></div>
+    </div>
+    <div class="chart-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>REV_EDGE</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>CONT_EDGE</div>
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(180,180,220,0.5)"></div>PRICE</div>
+    </div>
+    <canvas id="chart-btc"></canvas>
+  </div>
+
+  <div class="chart-panel">
+    <div class="panel-header">
+      <span class="panel-sym">ETHUSDT · LIVE</span>
+      <div><span class="panel-price" id="cp-eth">—</span><span class="panel-chg" id="cc-eth"></span></div>
+    </div>
+    <div class="chart-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>REV_EDGE</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>CONT_EDGE</div>
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(180,180,220,0.5)"></div>PRICE</div>
+    </div>
+    <canvas id="chart-eth"></canvas>
+  </div>
+
+  <div class="feed-panel">
+    <div class="feed-head">
+      <span class="feed-sym">▸ BTCUSDT · PRECISION FEED</span>
+      <div class="feed-stats">
+        <span class="feed-stat">total <span id="fc-btc">0</span></span>
+        <span class="feed-stat">filtered <span id="ff-btc" style="color:var(--blue)">0</span></span>
+      </div>
+    </div>
+    <div class="mode-banner">⬡ CONFIDENCE FILTER ACTIVE — SHOWING SIGNALS ≥ <span id="thr-label-btc" style="margin-left:4px">0.60</span></div>
+    <div class="threshold-bar">
+      <span class="thr-label">MIN CONF</span>
+      <button class="thr-btn active" onclick="setThreshold(0.50)">0.50</button>
+      <button class="thr-btn" onclick="setThreshold(0.60)">0.60</button>
+      <button class="thr-btn" onclick="setThreshold(0.70)">0.70</button>
+      <button class="thr-btn" onclick="setThreshold(0.80)">0.80</button>
+    </div>
+    <div class="feed-cols"><span></span><span>SIGNAL</span><span>PRICE</span><span>CLASS</span><span>CONF · REV/CONT</span><span style="text-align:right">RESULT</span></div>
+    <div class="feed-body" id="feed-btc"></div>
+  </div>
+
+  <div class="feed-panel">
+    <div class="feed-head">
+      <span class="feed-sym">▸ ETHUSDT · PRECISION FEED</span>
+      <div class="feed-stats">
+        <span class="feed-stat">total <span id="fc-eth">0</span></span>
+        <span class="feed-stat">filtered <span id="ff-eth" style="color:var(--blue)">0</span></span>
+      </div>
+    </div>
+    <div class="mode-banner">⬡ CONFIDENCE FILTER ACTIVE — SHOWING SIGNALS ≥ <span id="thr-label-eth" style="margin-left:4px">0.60</span></div>
+    <div class="threshold-bar">
+      <span class="thr-label">MIN CONF</span>
+      <button class="thr-btn active" onclick="setThreshold(0.50)">0.50</button>
+      <button class="thr-btn" onclick="setThreshold(0.60)">0.60</button>
+      <button class="thr-btn" onclick="setThreshold(0.70)">0.70</button>
+      <button class="thr-btn" onclick="setThreshold(0.80)">0.80</button>
+    </div>
+    <div class="feed-cols"><span></span><span>SIGNAL</span><span>PRICE</span><span>CLASS</span><span>CONF · REV/CONT</span><span style="text-align:right">RESULT</span></div>
+    <div class="feed-body" id="feed-eth"></div>
+  </div>
+
+</div>
+
+<script>
+const BASE = "http://localhost:8000";
+let threshold = 0.60;
+
+const state = {
+  BTCUSDT: { lastId:0, prices:[], times:[], signals:[], feedCount:0, filteredCount:0, firstPrice:null },
+  ETHUSDT: { lastId:0, prices:[], times:[], signals:[], feedCount:0, filteredCount:0, firstPrice:null },
+};
+const allHistory = [];
+
+// ── Charts ──
+function makeChart(id) {
+  const ctx = document.getElementById(id).getContext("2d");
+  return new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label:"Price", data:[], borderColor:"rgba(180,180,220,0.7)", borderWidth:1.5,
+          pointRadius:0, tension:0.2,
+          fill:{target:"origin",above:"rgba(90,90,180,0.03)"} },
+        { label:"REV", data:[], borderColor:"transparent",
+          backgroundColor:"rgba(255,23,68,0.9)", pointRadius:6,
+          pointHoverRadius:8, pointStyle:"triangle", showLine:false },
+        { label:"CONT", data:[], borderColor:"transparent",
+          backgroundColor:"rgba(0,230,118,0.9)", pointRadius:6,
+          pointHoverRadius:8, pointStyle:"triangle", showLine:false },
+      ],
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      scales:{
+        x:{display:false},
+        y:{
+          grid:{color:"rgba(255,255,255,0.025)",drawBorder:false},
+          ticks:{color:"#3a3a5c",font:{family:"JetBrains Mono",size:9},maxTicksLimit:4},
+          border:{color:"transparent"},
+        },
+      },
+    },
+  });
+}
+const charts = { BTCUSDT:makeChart("chart-btc"), ETHUSDT:makeChart("chart-eth") };
+
+// ── Confidence color ──
+function confColor(c) {
+  if (c >= 0.80) return "#ffd600";
+  if (c >= 0.65) return "#448aff";
+  return "#555580";
+}
+function confDotColor(sig, c) {
+  if (sig === "REV_EDGE")  return `rgba(255,23,68,${0.3 + c * 0.7})`;
+  if (sig === "CONT_EDGE") return `rgba(0,230,118,${0.3 + c * 0.7})`;
+  return "rgba(90,90,130,0.4)";
+}
+
+// ── Threshold toggle ──
+function setThreshold(val) {
+  threshold = val;
+  document.querySelectorAll(".thr-btn").forEach(b => {
+    b.classList.toggle("active", parseFloat(b.textContent) === val);
+  });
+  document.querySelectorAll("[id^='thr-label']").forEach(el => el.textContent = val.toFixed(2));
+}
+
+// ── Chart update ──
+function updateChart(sym, events) {
+  const s = state[sym]; const ch = charts[sym]; const MAX = 150;
+  events.forEach(e => {
+    const t = new Date(e.event_time_ms).toLocaleTimeString("en",{hour12:false});
+    s.prices.push(e.price); s.times.push(t);
+    s.signals.push(e.intelligence?.signal || "NO_DATA");
+    if (s.prices.length > MAX) { s.prices.shift(); s.times.shift(); s.signals.shift(); }
+  });
+  ch.data.labels = s.times;
+  ch.data.datasets[0].data = [...s.prices];
+  ch.data.datasets[1].data = s.prices.map((p,i) => s.signals[i]==="REV_EDGE" ? p : null);
+  ch.data.datasets[2].data = s.prices.map((p,i) => s.signals[i]==="CONT_EDGE" ? p : null);
+  ch.update("none");
+  const last = s.prices[s.prices.length-1];
+  if (!s.firstPrice) s.firstPrice = last;
+  const pct = ((last - s.firstPrice)/s.firstPrice*100).toFixed(3);
+  const sign = pct>=0?"+":"";
+  const priceId = sym==="BTCUSDT"?"cp-btc":"cp-eth";
+  const chgId   = sym==="BTCUSDT"?"cc-btc":"cc-eth";
+  const mp = sym==="BTCUSDT"?"m-btc-price":"m-eth-price";
+  const mc = sym==="BTCUSDT"?"m-btc-chg":"m-eth-chg";
+  const fmt = "$"+last.toLocaleString("en",{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById(priceId).textContent = fmt;
+  document.getElementById(mp).textContent = fmt;
+  const chgEl  = document.getElementById(chgId);
+  const chgEl2 = document.getElementById(mc);
+  chgEl.textContent = sign+pct+"%";
+  chgEl.className   = "panel-chg " + (pct>=0?"chg-up":"chg-dn");
+  chgEl2.textContent = sign+pct+"%";
+  chgEl2.className  = "metric-sub " + (pct>=0?"chg-up":"chg-dn");
+}
+
+// ── Feed update (precision mode) ──
+function updateFeed(sym, events) {
+  const feedId = sym==="BTCUSDT"?"feed-btc":"feed-eth";
+  const fcId   = sym==="BTCUSDT"?"fc-btc":"fc-eth";
+  const ffId   = sym==="BTCUSDT"?"ff-btc":"ff-eth";
+  const feed = document.getElementById(feedId);
+  const s = state[sym];
+
+  events.forEach(e => {
+    s.feedCount++;
+    const intel = e.intelligence || {};
+    const sig   = intel.signal || "NO_DATA";
+    const conf  = intel.confidence ?? 0;
+    if (conf < threshold || sig === "NO_DATA" || sig === "NO_EDGE") return;
+    s.filteredCount++;
+    const div = document.createElement("div");
+    div.className = "ev " + sig + " flash";
+    const probR = intel.prob_reversal    != null ? Math.round(intel.prob_reversal*100)+"%" : "—";
+    const probC = intel.prob_continuation!= null ? Math.round(intel.prob_continuation*100)+"%" : "—";
+    const cls   = (intel.classification||"—").replaceAll("_"," ");
+    const price = e.price!=null?"$"+e.price.toLocaleString("en",{minimumFractionDigits:2,maximumFractionDigits:2}):"—";
+    const confStr = conf.toFixed(3);
+    div.innerHTML = `
+      <span class="conf-dot" style="background:${confDotColor(sig,conf)};margin:0 auto"></span>
+      <span class="ev-sig">${sig}</span>
+      <span class="ev-price">${price}</span>
+      <span class="ev-class">${cls}</span>
+      <span class="ev-prob" style="color:${confColor(conf)}">${confStr} · <span class="r">↓${probR}</span><span class="c"> ↑${probC}</span></span>
+      <span style="text-align:right"><span class="badge PENDING">PENDING</span></span>
+    `;
+    div.dataset.evId = e.id;
+    feed.prepend(div);
+  });
+
+  while(feed.children.length > 60) feed.removeChild(feed.lastChild);
+  document.getElementById(fcId).textContent = s.feedCount.toLocaleString();
+  document.getElementById(ffId).textContent = s.filteredCount.toLocaleString();
+}
+
+// ── Stats + accuracy ──
+function updateStats(events) {
+  const now = Date.now();
+  allHistory.push(...events);
+  const w5 = allHistory.filter(e=>(now-e.event_time_ms)<300000);
+  const rev   = w5.filter(e=>e.intelligence?.signal==="REV_EDGE").length;
+  const cont  = w5.filter(e=>e.intelligence?.signal==="CONT_EDGE").length;
+  const noise = w5.filter(e=>e.intelligence?.signal==="NO_EDGE").length;
+  document.getElementById("m-rev").textContent   = rev;
+  document.getElementById("m-cont").textContent  = cont;
+  document.getElementById("m-noise").textContent = noise;
+  if (allHistory.length>6000) allHistory.splice(0,allHistory.length-6000);
+}
+
+async function updateAccuracy() {
+  try {
+    const r = await fetch(BASE+"/accuracy?symbol=BTCUSDT");
+    const d = await r.json();
+    if (d.win_rate_10s != null) {
+      document.getElementById("m-acc-btc").textContent = d.win_rate_10s.toFixed(1)+"%";
+      document.getElementById("winbar-btc").style.width = d.win_rate_10s+"%";
+    }
+    if (d.win_rate_30s != null) {
+      document.getElementById("m-acc-30").textContent = d.win_rate_30s.toFixed(1)+"%";
+    }
+    document.getElementById("m-validated").textContent = (d.validated||0)+" validated";
+    if (d.avg_confidence) {
+      document.getElementById("m-conf").textContent = d.avg_confidence.toFixed(3);
+    }
+  } catch(e){}
+}
+
+// ── Poll events ──
+async function pollEvents(sym) {
+  try {
+    const r = await fetch(`${BASE}/events?symbol=${sym}&limit=20`);
+    if (!r.ok) return;
+    const events = await r.json();
+    const s = state[sym];
+    const newEv = events.filter(e=>e.id>s.lastId);
+    if (!newEv.length) return;
+    s.lastId = Math.max(...events.map(e=>e.id));
+    newEv.reverse();
+    updateChart(sym, newEv);
+    updateFeed(sym, newEv);
+    updateStats(newEv);
+  } catch(e) { console.error(sym,e); }
+}
+
+// ── Clock ──
+setInterval(()=>{
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("en",{hour12:false});
+},1000);
+
+// ── Main loop ──
+(async function loop(){
+  await Promise.all([pollEvents("BTCUSDT"), pollEvents("ETHUSDT")]);
+  setInterval(()=>Promise.all([pollEvents("BTCUSDT"),pollEvents("ETHUSDT")]),1000);
+  setInterval(updateAccuracy, 8000);
+  updateAccuracy();
+})();
+</script>
+</body>
+</html>
