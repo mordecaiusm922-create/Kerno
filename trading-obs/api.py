@@ -377,6 +377,17 @@ def get_signals_ml(
             interp = f"{bkt} spike — directional momentum detected. Continuation likely ({score:.0%})."
         else:
             interp = f"{bkt} spike — absorption pattern. Reversal likely ({1-score:.0%})."
+        # Top 3 drivers por magnitud de contribucion
+        feature_names = ["spike_pct","zscore","spread_est","volatility_1m",
+                         "latency_ms","imbalance_20","burst_1s","vol_ratio","dir_burst"]
+        try:
+            base_model = model.calibrated_classifiers_[0].estimator
+            coefs = base_model.coef_[0]
+            contribs = {f: abs(float(coefs[i]) * float(X_scaled[i][i])) 
+                       for i, f in enumerate(feature_names)}
+            drivers = sorted(contribs, key=contribs.get, reverse=True)[:3]
+        except:
+            drivers = ["spike_pct", "vol_ratio", "spread_est"]
         out.append({
             "symbol":        symbol.upper(),
             "price":         r["price"],
@@ -387,6 +398,7 @@ def get_signals_ml(
             "confidence":    conf,
             "interpretation": interp,
             "action":        "FILTER_IN",
+            "drivers":      drivers,
         })
         if len(out) >= limit:
             break
