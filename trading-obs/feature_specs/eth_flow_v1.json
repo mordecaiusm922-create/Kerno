@@ -1,0 +1,56 @@
+{
+  "name": "eth_flow_v1",
+  "asset": "ETHUSDT",
+  "version": "1.0",
+  "target": "CONTINUATION_vs_ABSORPTION",
+  "event_filter": {
+    "spike_percentile": "p75+"
+  },
+  "windows": {
+    "short": "250ms",
+    "fast": "1s",
+    "medium": "5s",
+    "baseline": "60s"
+  },
+  "normalization": {
+    "method": "rolling_zscore",
+    "baseline_window": "60s",
+    "min_periods": 30
+  },
+  "features": [
+    {
+      "name": "signed_imbalance_1s",
+      "formula": "sum(sign(delta_price) * volume)",
+      "window": "1s",
+      "normalize": true
+    },
+    {
+      "name": "burst_1s",
+      "formula": "ticks_1s / mean(ticks_60s)",
+      "window": "1s",
+      "normalize": false
+    },
+    {
+      "name": "ret_1s",
+      "formula": "(price_t - price_t-1s) / price_t-1s",
+      "window": "1s",
+      "normalize": true
+    },
+    {
+      "name": "vol_ratio_1s_5s",
+      "formula": "vol_1s / vol_5s",
+      "normalize": false
+    },
+    {
+      "name": "burst_accel_1s_5s",
+      "formula": "burst_1s - burst_5s",
+      "normalize": false
+    }
+  ],
+  "excluded": [
+    "post_spike_decay",
+    "max_adverse_excursion",
+    "max_favorable_excursion",
+    "retrace_ratio"
+  ]
+}
