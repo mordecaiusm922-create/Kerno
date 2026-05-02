@@ -282,43 +282,6 @@ def get_metrics(
     conn.close()
     return [dict(r) for r in rows]
 
-@app.get("/signals")
-def get_signals(
-    symbol:         Annotated[str,   Query()] = "BTCUSDT",
-    min_confidence: Annotated[float, Query()] = 0.60,
-    limit:          Annotated[int,   Query(ge=1, le=200)] = 50,
-):
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT id, symbol, price, quantity,
-               event_time_ms, ingest_time_ms,
-               (ingest_time_ms-event_time_ms) AS latency_ms,
-               is_buyer_maker, trade_id
-        FROM market_events WHERE symbol=?
-        ORDER BY event_time_ms DESC LIMIT 500
-    """, (symbol.upper(),)).fetchall()
-    conn.close()
-    results = []
-    prev_price = None
-    for r in rows:
-        d = dict(r)
-        if prev_price and prev_price > 0:
-            change_pct = (d["price"] - prev_price) / prev_price * 100
-            intel = _classify(d["symbol"], change_pct)
-            d["spike_pct"] = round(change_pct, 6)
-            d["intelligence"] = intel
-        else:
-            d["spike_pct"] = 0.0
-            d["intelligence"] = {"signal": "NO_DATA", "confidence": 0.0}
-        prev_price = d["price"]
-        conf = d["intelligence"].get("confidence", 0)
-        sig  = d["intelligence"].get("signal", "NO_DATA")
-        if conf >= min_confidence and sig not in ("NO_DATA", "NO_EDGE"):
-            results.append(d)
-        if len(results) >= limit:
-            break
-    return results
-
 @app.get("/accuracy")
 def get_accuracy(symbol: Annotated[str, Query()] = "BTCUSDT"):
     conn = get_conn()
@@ -344,3 +307,89 @@ def get_accuracy(symbol: Annotated[str, Query()] = "BTCUSDT"):
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard():
     return open("dashboard.html", encoding="utf-8").read()
+
+
+# Kerno ML Model
+import pickle as _pickle
+import numpy as _np
+
+_KERNO_MODEL = None
+_KERNO_SCALER = None
+_KERNO_FEATURES = None
+
+def _load_model():
+    global _KERNO_MODEL, _KERNO_SCALER, _KERNO_FEATURES
+    if _KERNO_MODEL is None:
+        try:
+            with open("kerno_model.pkl", "rb") as f:
+                data = _pickle.load(f)
+            _KERNO_MODEL   = data["model"]
+            _KERNO_SCALER  = data["scaler"]
+            _KERNO_FEATURES = data["features"]
+        except Exception as e:
+            print(f"Model not loaded: {e}")
+    return _KERNO_MODEL, _KERNO_SCALER, _KERNO_FEATURES
+
+@app.get("/signals")
+def get_signals_ml(
+    symbol: Annotated[str, Query()] = "BTCUSDT",
+    limit:  Annotated[int, Query(ge=1, le=100)] = 20,
+    min_score: Annotated[float, Query(ge=0.0, le=1.0)] = 0.5,
+):
+    model, scaler, features = _load_model()
+    if model is None:
+        return {"error": "Model not loaded"}
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, price, event_time_ms, spike_pct, zscore, spread_est, "
+        "volatility_1m, latency_ms, imbalance_20, burst_1s, vol_ratio, dir_burst, bucket "
+        "FROM feature_store "
+        "WHERE symbol=? AND imbalance_20 IS NOT NULL "
+        "ORDER BY event_time_ms DESC LIMIT 200",
+        (symbol.upper(),)
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    X = _np.array([[
+        (r["spike_pct"] or 0), (r["zscore"] or 0), (r["spread_est"] or 0),
+        (r["volatility_1m"] or 0), (r["latency_ms"] or 0),
+        (r["imbalance_20"] or 0), (r["burst_1s"] or 0),
+        (r["vol_ratio"] or 0), (r["dir_burst"] or 0)
+    ] for r in rows])
+    print(f"[signals] X shape: {X.shape}, rows: {len(rows)}")
+
+    X_scaled = scaler.transform(X)
+    scores   = model.predict_proba(X_scaled)[:,1]
+
+    out = []
+    for i, r in enumerate(rows):
+        score = float(scores[i])
+        if score < min_score:
+            continue
+        conf  = "HIGH" if score >= 0.8 else ("MEDIUM" if score >= 0.6 else "LOW")
+        bkt   = r["bucket"] or "UNKNOWN"
+        sig   = "CONTINUATION" if score >= 0.5 else "ABSORPTION"
+        if sig == "CONTINUATION":
+            interp = f"{bkt} spike — directional momentum detected. Continuation likely ({score:.0%})."
+        else:
+            interp = f"{bkt} spike — absorption pattern. Reversal likely ({1-score:.0%})."
+        out.append({
+            "symbol":        symbol.upper(),
+            "price":         r["price"],
+            "event_time_ms": r["event_time_ms"],
+            "signal":        sig,
+            "spike_type":    bkt,
+            "score":         round(score, 3),
+            "confidence":    conf,
+            "interpretation": interp,
+            "action":        "FILTER_IN",
+        })
+        if len(out) >= limit:
+            break
+
+    out.sort(key=lambda x: x["score"], reverse=True)
+    return out
