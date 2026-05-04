@@ -304,6 +304,10 @@ def get_accuracy(symbol: Annotated[str, Query()] = "BTCUSDT"):
         "avg_confidence": round(sum(r[3] for r in rows)/total, 3),
     }
 
+@app.get("/terminal", response_class=HTMLResponse)
+def get_terminal():
+    return open("terminal.html", encoding="utf-8").read()
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard():
     return open("dashboard.html", encoding="utf-8").read()
