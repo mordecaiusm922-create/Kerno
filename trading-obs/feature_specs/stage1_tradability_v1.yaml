@@ -1,0 +1,147 @@
+version: 1.0
+name: stage1_tradability_v1
+description: >
+  Tradability filter that predicts whether a market event is economically actionable.
+  Outputs P(TRADEABLE | x). Designed as Stage 1 in a two-stage microstructure system.
+
+target:
+  type: binary
+  classes:
+    - TRADEABLE
+    - NEUTRAL
+
+labeling:
+  horizon_seconds: 10
+
+  threshold:
+    type: adaptive
+    formula: "max(c_min, alpha * sigma_1m, beta * spread_est, gamma * fee_floor)"
+
+    params:
+      c_min: 0.0001        # 0.01% minimum economic threshold
+      alpha: 1.0           # volatility multiplier
+      beta: 1.0            # spread multiplier
+      gamma: 1.0           # fee/slippage multiplier
+
+  definitions:
+    M_plus: "max((price_t - price_0) / price_0) over horizon"
+    M_minus: "min((price_t - price_0) / price_0) over horizon"
+
+  rule: |
+    if max(abs(M_plus), abs(M_minus)) >= c_t:
+        label = TRADEABLE
+    else:
+        label = NEUTRAL
+
+features:
+
+  event_density:
+    - name: event_density_1m
+      window: 60s
+      formula: "count(events in last 60s) / 60"
+      hypothesis: "Higher activity increases probability of tradable conditions"
+
+    - name: event_density_5m
+      window: 300s
+      formula: "count(events in last 300s) / 300"
+      hypothesis: "Baseline activity level"
+
+    - name: density_ratio_1m_5m
+      formula: "event_density_1m / event_density_5m"
+      hypothesis: "Detects acceleration in activity"
+
+  volatility:
+    - name: volatility_1m
+      window: 60s
+      formula: "std(log_returns)"
+      hypothesis: "Local realized volatility"
+
+    - name: volatility_5m
+      window: 300s
+      formula: "std(log_returns)"
+      hypothesis: "Medium-term volatility baseline"
+
+    - name: vol_compression_250ms_1m
+      formula: "vol_250ms / volatility_1m"
+      hypothesis: "Detects compression vs expansion regimes"
+
+    - name: vol_compression_1s_5m
+      formula: "vol_1s / volatility_5m"
+      hypothesis: "Short-term shock relative to regime"
+
+  spread:
+    - name: spread_est
+      method: "roll_estimator_or_proxy"
+      hypothesis: "Execution friction proxy"
+
+    - name: spread_z_5m
+      window: 300s
+      formula: "(spread_est - mean(spread_est)) / std(spread_est)"
+      hypothesis: "Relative spread stress"
+
+    - name: micro_range_1s
+      window: 1s
+      formula: "max(price) - min(price)"
+      hypothesis: "Short-term excursion / friction proxy"
+
+  burst:
+    - name: burstiness_1m
+      window: 60s
+      formula: "trades_1m / mean(trades_baseline)"
+      hypothesis: "Clustered activity indicates tradability"
+
+    - name: burstiness_5m
+      window: 300s
+      formula: "trades_5m / mean(trades_baseline)"
+      hypothesis: "Longer-term clustering baseline"
+
+    - name: burst_ratio_1m_5m
+      formula: "burstiness_1m / burstiness_5m"
+      hypothesis: "Acceleration in burst behavior"
+
+interactions:
+  - name: density_x_spread
+    formula: "event_density_1m * spread_est"
+    hypothesis: "Activity must overcome friction to be tradable"
+
+  - name: density_x_compression
+    formula: "event_density_1m * vol_compression_250ms_1m"
+    hypothesis: "Active expansion regimes are more tradable"
+
+  - name: burst_x_spread
+    formula: "burstiness_1m * spread_est"
+    hypothesis: "Burst without execution quality may be noise"
+
+training:
+  model: logistic_regression
+  class_weight: balanced
+
+  notes: >
+    Stage 1 is a gating model. It should prioritize recall of tradable regimes
+    while maintaining reasonable precision. Evaluate with PR-AUC in addition to ROC-AUC.
+
+inference:
+  output: probability
+
+  decision_rule: |
+    if P(TRADEABLE) < threshold:
+        signal = NO_EDGE
+    else:
+        pass_to_stage2 = true
+
+  threshold: 0.5   # tune via precision-recall tradeoff
+
+monitoring:
+  - metric: P(TRADEABLE)_rolling
+    description: "Detect drift in tradable regime frequency"
+
+  - metric: event_density_distribution
+    description: "Monitor structural activity changes"
+
+  - metric: regime_slice_performance
+    description: "Evaluate model across volatility and spread regimes"
+
+notes: >
+  Stage 1 should not include directional information or post-event features.
+  It only determines whether an event is worth passing to the directional model.
+  Flat market periods are critical for training and must be retained.
