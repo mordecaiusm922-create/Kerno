@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kerno — Signal Terminal</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#05050a;--bg2:#0a0a12;--bg3:#0f0f18;
+  --border:#16162a;--green:#00e676;--red:#ff1744;
+  --yellow:#ffd600;--blue:#448aff;--muted:#3a3a5c;
+  --text:#b8b8d8;--text2:#7070a0;
+}
+body{background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+
+/* HEADER */
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+.logo{font-size:13px;font-weight:700;letter-spacing:5px;color:#fff}
+.asset-selector{display:flex;gap:6px}
+.asset-btn{padding:4px 12px;font-family:inherit;font-size:10px;font-weight:700;letter-spacing:2px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;border-radius:2px;transition:all .15s}
+.asset-btn.active{border-color:var(--green);color:var(--green);background:rgba(0,230,118,.08)}
+.status{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--text2);letter-spacing:2px}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+
+/* SIGNAL HERO */
+.signal-hero{padding:20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.signal-label{font-size:9px;letter-spacing:3px;color:var(--text2);margin-bottom:8px}
+.signal-main{display:flex;align-items:center;gap:16px;margin-bottom:12px}
+.signal-type{font-size:36px;font-weight:700;letter-spacing:2px}
+.signal-type.CONTINUATION{color:var(--green);text-shadow:0 0 20px rgba(0,230,118,.3)}
+.signal-type.ABSORPTION{color:var(--red);text-shadow:0 0 20px rgba(255,23,68,.3)}
+.signal-type.NOISE{color:var(--muted)}
+.signal-score{font-size:28px;font-weight:700;color:#fff}
+.signal-conf{padding:4px 10px;font-size:10px;font-weight:700;letter-spacing:2px;border-radius:2px}
+.signal-conf.HIGH{background:rgba(0,230,118,.15);color:var(--green);border:1px solid rgba(0,230,118,.3)}
+.signal-conf.MEDIUM{background:rgba(255,214,0,.1);color:var(--yellow);border:1px solid rgba(255,214,0,.2)}
+.signal-conf.LOW{background:rgba(90,90,130,.2);color:var(--muted);border:1px solid var(--border)}
+.action-line{font-size:13px;color:#fff;font-weight:700;margin-bottom:8px}
+.action-line.CONTINUATION{color:var(--green)}
+.action-line.ABSORPTION{color:var(--red)}
+.signal-meta{font-size:10px;color:var(--text2)}
+
+/* MIDDLE */
+.middle{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);flex-shrink:0}
+.panel{background:var(--bg2);padding:14px 18px}
+.panel-title{font-size:9px;letter-spacing:3px;color:var(--text2);margin-bottom:10px}
+
+/* DRIVERS */
+.driver{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+.driver:last-child{border:none}
+.driver-name{font-size:11px;color:var(--text)}
+.driver-bar-wrap{width:80px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.driver-bar{height:100%;border-radius:2px;background:var(--green)}
+
+/* REGIME */
+.regime-tag{display:inline-block;padding:4px 10px;font-size:9px;letter-spacing:2px;border-radius:2px;margin:4px 4px 4px 0}
+.regime-tag.flow{background:rgba(68,138,255,.1);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
+.regime-tag.friction{background:rgba(255,214,0,.1);color:var(--yellow);border:1px solid rgba(255,214,0,.2)}
+.regime-tag.highvol{background:rgba(255,23,68,.1);color:var(--red);border:1px solid rgba(255,23,68,.2)}
+.regime-tag.lowvol{background:rgba(0,230,118,.08);color:var(--green);border:1px solid rgba(0,230,118,.2)}
+
+/* HISTORY */
+.history{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.history-head{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.history-title{font-size:9px;letter-spacing:3px;color:var(--text2)}
+.history-cols{display:grid;grid-template-columns:80px 120px 60px 80px 1fr;padding:6px 18px;font-size:8px;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--border);flex-shrink:0}
+.history-body{overflow-y:auto;flex:1}
+.history-body::-webkit-scrollbar{width:2px}
+.history-body::-webkit-scrollbar-thumb{background:var(--border)}
+.hist-row{display:grid;grid-template-columns:80px 120px 60px 80px 1fr;padding:6px 18px;font-size:11px;border-left:2px solid transparent;align-items:center}
+.hist-row.CONTINUATION{border-left-color:var(--green)}
+.hist-row.ABSORPTION{border-left-color:var(--red)}
+.hist-row.NOISE{border-left-color:var(--muted);opacity:.5}
+.hit{color:var(--green);font-size:10px}
+.miss{color:var(--red);font-size:10px}
+.pending{color:var(--muted);font-size:10px}
+
+/* BOTTOM */
+.bottom{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-top:1px solid var(--border);flex-shrink:0}
+.metric{background:var(--bg2);padding:8px 14px}
+.metric-label{font-size:8px;letter-spacing:2px;color:var(--muted);margin-bottom:2px}
+.metric-value{font-size:14px;font-weight:700;color:var(--text2)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">KERNO</div>
+  <div class="asset-selector">
+    <button class="asset-btn active" onclick="setAsset('BTCUSDT')">BTC</button>
+    <button class="asset-btn" onclick="setAsset('ETHUSDT')">ETH</button>
+  </div>
+  <div class="status">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">LIVE</span>
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="signal-hero">
+  <div class="signal-label">CURRENT SIGNAL</div>
+  <div class="signal-main">
+    <div class="signal-type" id="sig-type">—</div>
+    <div class="signal-score" id="sig-score">—</div>
+    <div class="signal-conf" id="sig-conf">—</div>
+  </div>
+  <div class="action-line" id="sig-action">Waiting for signal...</div>
+  <div class="signal-meta" id="sig-meta">—</div>
+</div>
+
+<div class="middle">
+  <div class="panel">
+    <div class="panel-title">SIGNAL DRIVERS</div>
+    <div id="drivers-list"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">REGIME</div>
+    <div id="regime-tags"></div>
+  </div>
+</div>
+
+<div class="history">
+  <div class="history-head">
+    <span class="history-title">SIGNAL HISTORY</span>
+    <span style="font-size:9px;color:var(--muted)" id="hist-stats">—</span>
+  </div>
+  <div class="history-cols">
+    <span>TIME</span><span>SIGNAL</span><span>SCORE</span><span>CONF</span><span>RESULT</span>
+  </div>
+  <div class="history-body" id="history-body"></div>
+</div>
+
+<div class="bottom">
+  <div class="metric"><div class="metric-label">BTC PURGED AUC</div><div class="metric-value" style="color:var(--green)">0.634</div></div>
+  <div class="metric"><div class="metric-label">ETH PURGED AUC</div><div class="metric-value" style="color:var(--green)">0.662</div></div>
+  <div class="metric"><div class="metric-label">TOP BUCKET HIT</div><div class="metric-value" style="color:var(--yellow)">100%</div></div>
+  <div class="metric"><div class="metric-label">VALIDATION</div><div class="metric-value" style="font-size:10px">PURGED WF</div></div>
+</div>
+
+<script>
+const BASE = "http://localhost:8000";
+let currentAsset = "BTCUSDT";
+const history = [];
+
+function setAsset(asset) {
+  currentAsset = asset;
+  document.querySelectorAll(".asset-btn").forEach(b => {
+    b.classList.toggle("active", b.textContent === asset.replace("USDT",""));
+  });
+  document.getElementById("history-body").innerHTML = "";
+  fetchSignal();
+}
+
+function setAsset(asset) {
+  currentAsset = asset;
+  document.querySelectorAll(".asset-btn").forEach(b => {
+    b.classList.toggle("active", b.textContent === asset.replace("USDT",""));
+  });
+  fetchSignal();
+}
+
+async function fetchSignal() {
+  try {
+    const r = await fetch(`${BASE}/signals?symbol=${currentAsset}&limit=20&min_score=0.5`);
+    if (!r.ok) { setDisconnected(); return; }
+    const data = await r.json();
+    if (!data || !data.length) return;
+
+    const latest = data[0];
+    const sig = latest.signal || "NOISE";
+    const score = latest.score || 0;
+    const conf = latest.confidence || "LOW";
+    const drivers = latest.drivers || [];
+    const price = latest.price || 0;
+    const ts = new Date(latest.event_time_ms).toLocaleTimeString("en",{hour12:false});
+
+    // Hero
+    const sigEl = document.getElementById("sig-type");
+    sigEl.textContent = sig;
+    sigEl.className = "signal-type " + sig;
+
+    document.getElementById("sig-score").textContent = score.toFixed(3);
+    const confEl = document.getElementById("sig-conf");
+    confEl.textContent = conf;
+    confEl.className = "signal-conf " + conf;
+
+    const actionEl = document.getElementById("sig-action");
+    if (sig === "CONTINUATION") {
+      actionEl.textContent = "→ USE AS FILTER — High probability continuation";
+      actionEl.className = "action-line CONTINUATION";
+    } else if (sig === "ABSORPTION") {
+      actionEl.textContent = "→ AVOID ENTRY — Absorption pattern detected";
+      actionEl.className = "action-line ABSORPTION";
+    } else {
+      actionEl.textContent = "→ STAND BY — No clear signal";
+      actionEl.className = "action-line";
+    }
+
+    document.getElementById("sig-meta").textContent =
+      `${currentAsset} · $${price.toLocaleString()} · ${ts} · ${latest.spike_type || "—"}`;
+
+    // Drivers
+    const dl = document.getElementById("drivers-list");
+    dl.innerHTML = drivers.map((d,i) => {
+      const w = Math.round((3-i)/3*100);
+      return `<div class="driver">
+        <span class="driver-name">${d}</span>
+        <div class="driver-bar-wrap"><div class="driver-bar" style="width:${w}%"></div></div>
+      </div>`;
+    }).join("");
+
+    // Regime
+    const asset = currentAsset === "BTCUSDT" ? "friction" : "flow";
+    const vol = score > 0.7 ? "highvol" : "lowvol";
+    document.getElementById("regime-tags").innerHTML = `
+      <span class="regime-tag ${asset}">${asset.toUpperCase()}-DRIVEN</span>
+      <span class="regime-tag ${vol}">${vol === "highvol" ? "HIGH VOL" : "LOW VOL"}</span>
+      <span class="regime-tag ${sig === "CONTINUATION" ? "flow" : "friction"}">${sig}</span>
+    `;
+
+    // History
+    const existing = history.find(h => h.event_time_ms === latest.event_time_ms);
+    if (!existing) {
+      history.unshift({...latest, result: "PENDING"});
+      if (history.length > 20) history.pop();
+      renderHistory();
+    }
+
+    setConnected();
+  } catch(e) { setDisconnected(); }
+}
+
+function renderHistory() {
+  const body = document.getElementById("history-body");
+  const wins = history.filter(h => h.result === "HIT").length;
+  const total = history.filter(h => h.result !== "PENDING").length;
+  document.getElementById("hist-stats").textContent =
+    total > 0 ? `${wins}/${total} HIT` : `${history.length} signals`;
+
+  body.innerHTML = history.map(h => {
+    const ts = new Date(h.event_time_ms).toLocaleTimeString("en",{hour12:false});
+    const resultClass = h.result === "HIT" ? "hit" : h.result === "MISS" ? "miss" : "pending";
+    const resultText = h.result === "HIT" ? "✓ HIT" : h.result === "MISS" ? "✗ MISS" : "···";
+    return `<div class="hist-row ${h.signal}">
+      <span>${ts}</span>
+      <span>${h.signal}</span>
+      <span>${(h.score||0).toFixed(3)}</span>
+      <span>${h.confidence||"—"}</span>
+      <span class="${resultClass}">${resultText}</span>
+    </div>`;
+  }).join("");
+}
+
+function setConnected() {
+  document.getElementById("status-dot").style.background = "var(--green)";
+  document.getElementById("status-text").textContent = "LIVE";
+}
+
+function setDisconnected() {
+  document.getElementById("status-dot").style.background = "var(--red)";
+  document.getElementById("status-text").textContent = "DISCONNECTED";
+}
+
+setInterval(() => {
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("en",{hour12:false});
+}, 1000);
+
+fetchSignal();
+setInterval(fetchSignal, 3000);
+</script>
+</body>
+</html>
