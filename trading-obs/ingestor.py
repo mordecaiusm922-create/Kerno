@@ -2,8 +2,8 @@
 Kerno — Binance WebSocket ingestor (SQLite dev mode)
 
 Uso:
-  python ingestor.py
-  python ingestor.py --symbols BTCUSDT ETHUSDT SOLUSDT
+python ingestor.py
+python ingestor.py --symbols BTCUSDT ETHUSDT SOLUSDT
 """
 import asyncio
 import json
@@ -53,7 +53,7 @@ class BatchWriter:
     INSERT_SQL = """
         INSERT INTO market_events
             (symbol, event_type, price, quantity,
-             event_time_ms, ingest_time_ms, trade_id, is_buyer_maker, raw)
+        event_time_ms, ingest_time_ms, trade_id, is_buyer_maker, raw)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 

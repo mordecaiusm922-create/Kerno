@@ -140,7 +140,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:10p
 </div>
 
 <script>
-const BASE = "http://localhost:8000";
+const BASE = window.location.hostname === "localhost" ? "http://localhost:8000" : "https://tu-api-url.railway.app";
 let currentAsset = "BTCUSDT";
 const history = [];
 
