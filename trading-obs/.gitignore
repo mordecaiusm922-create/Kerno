@@ -1,0 +1,7 @@
+﻿kerno.db
+kerno.db-shm
+kerno.db-wal
+*.pkl
+__pycache__/
+.env
+*.pyc
