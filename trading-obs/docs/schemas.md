@@ -21,7 +21,7 @@
 |---|---|---|
 | `exchange` | string | e.g. "binance" |
 | `symbol` | string | canonical symbol, see Symbol Registry |
-| `trade_id` | string | exchange-native trade id |
+| `exchange_trade_id` | string | opaque exchange-native trade id, always TEXT (Binance emits integers, Coinbase emits strings — never assume a type/format for this field) |
 | `price` | float | |
 | `quantity` | float | base asset units |
 | `side` | enum (`buy`/`sell`) | aggressor side |
@@ -88,9 +88,27 @@ identifier. Required fields:
 | `native_symbol` | string | e.g. "BTCUSDT" |
 | `asset_base` | string | "BTC" |
 | `asset_quote` | string | "USDT" |
+| `instrument` | string | groups pairs sharing a base asset across quote currencies/exchanges for cross-exchange analysis, e.g. "BTC" for both BTC-USDT (Binance) and BTC-USD (Coinbase). Distinct pairs remain distinct `canonical_symbol`s — basis risk between quote currencies (USDT vs USD) must stay visible, not hidden by false equivalence. |
 | `instrument_type` | enum (`spot`/`perp`/`future`) | |
 | `tick_size` | float | minimum price increment |
 | `lot_size` | float | minimum quantity increment |
+
+## v0.45a schema correction (validated hypothesis: multi-exchange `trades`)
+
+The original `trade_id INTEGER` field assumed exchange-native trade IDs are
+numeric. This held for Binance but breaks for Coinbase, which emits string trade
+IDs. This was caught and corrected *before* writing the Coinbase connector
+(v0.45a), per the principle: the multi-exchange model must survive a second
+exchange without special-case exceptions.
+
+Fix: `trade_id INTEGER` -> `exchange_trade_id TEXT` (opaque identifier; the
+internal primary key remains `id INTEGER PRIMARY KEY AUTOINCREMENT`, unaffected).
+3,025,526 existing rows migrated via `CAST(trade_id AS TEXT)`, zero data loss.
+
+`symbol_registry.instrument` was added in the same migration to support the
+Instrument/Pair distinction: BTC-USDT and BTC-USD are related but distinct pairs
+(different quote currencies), grouped under `instrument='BTC'` for cross-exchange
+queries without conflating them as the same `canonical_symbol`.
 
 ## Migration note (v0.1 -> v0.25)
 
@@ -108,6 +126,9 @@ Binance-native field names. v0.25 introduces:
 
 No feature recomputation is required for this migration since the underlying values
 are identical; only field names and table name change.
+
+Note: `trade_id` was further corrected to `exchange_trade_id TEXT` in v0.45a (see
+above) ahead of the Coinbase connector.
 
 ## Existing labels (feature_store, unchanged by this schema)
 
