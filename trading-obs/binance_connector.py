@@ -67,7 +67,7 @@ class BinanceConnector(ExchangeConnector):
                 "quantity":       float(raw["q"]),
                 "event_time_ms":  raw["T"],
                 "ingest_time_ms": int(time.time() * 1000),
-                "trade_id":       raw["t"],
+                "exchange_trade_id": str(raw["t"]),
                 "is_buyer_maker": 1 if raw["m"] else 0,
                 "raw":            raw_msg,
             }
