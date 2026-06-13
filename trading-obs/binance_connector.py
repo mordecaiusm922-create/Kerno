@@ -68,7 +68,7 @@ class BinanceConnector(ExchangeConnector):
                 "event_time_ms":  raw["T"],
                 "ingest_time_ms": int(time.time() * 1000),
                 "exchange_trade_id": str(raw["t"]),
-                "is_buyer_maker": 1 if raw["m"] else 0,
+                "side":           "sell" if raw["m"] else "buy",
                 "raw":            raw_msg,
             }
         except KeyError as exc:
