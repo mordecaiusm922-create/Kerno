@@ -157,3 +157,31 @@ pre-existing misalignments from v0.35, surfaced by writing real events to `trade
 for the first time): it emitted `trade_id` instead of `exchange_trade_id`, and
 `is_buyer_maker` instead of `side`. Both fixed by direct field rename/remap, no
 schema changes needed (v0.45a already covered the target schema correctly).
+
+## Finding #2 (pre-v0.55, before writing BybitConnector)
+
+Audit of every query against `market_events`/`feature_store`/`signal_outcomes`
+(api.py, validator.py, all of research/*.py) confirms: **every query filters or
+groups by `symbol` alone — `exchange` is never referenced anywhere in the ML
+pipeline.** This pipeline reads `market_events`/`feature_store`, not `trades`, so
+today's Coinbase data in `trades` (`symbol='BTC-USD'`) does not collide with
+anything.
+
+But `symbol` as "native exchange symbol, verbatim" is not collision-safe in
+general. Bybit's linear perpetual BTCUSDT uses the identical native symbol string
+`"BTCUSDT"` as Binance spot. If `trades.symbol='BTCUSDT'` for both, any future code
+that reads `trades` and groups by `symbol` (e.g. when `feature_store` is eventually
+repointed to `trades`, per the v0.25 known gap) would silently merge two
+economically distinct markets — perp has funding/basis, spot doesn't — into one
+feature series.
+
+**Rule going forward**: `trades.symbol` must be collision-safe across exchanges and
+instrument types by construction — self-describing, not relying on `exchange` as an
+implicit disambiguator that downstream code may forget to use. Binance spot keeps
+`symbol='BTCUSDT'` (no collision today, and changing it would break the v0.45
+validation baseline). Bybit's linear perpetual BTCUSDT is written as
+`symbol='BTCUSDT-PERP'` — distinct string, collision impossible regardless of
+whether a query also filters by `exchange`. `symbol_registry.native_symbol` retains
+the true exchange-native value (`"BTCUSDT"` for both) for reference/API calls;
+`trades.symbol` and `symbol_registry.canonical_symbol`/lookups use the
+disambiguated form.
