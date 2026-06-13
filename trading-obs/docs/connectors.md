@@ -112,3 +112,48 @@ If any of these fail, the fix is at the schema/registry level (as with Finding #
 not a per-connector hack. This is the bar v0.45 needs to clear before v0.55
 (Bybit perpetuals — funding/basis analysis) and v0.65 (OKX — structural complexity)
 build on top of it.
+
+### Validation results (v0.45, executed)
+
+120-second concurrent run, BinanceConnector (BTCUSDT) + CoinbaseConnector
+(BTC-USD), written to `trades`. Results:
+
+1. **Timestamp comparability: PASS.** Both exchanges' `event_time_ms` ranges fell
+   within the run window and overlapped correctly in wall-clock terms — same
+   epoch, same unit (ms).
+2. **Symbol registry resolution: initially UNRESOLVED, fixed in v0.45c.**
+   `symbol_registry` only had Binance rows; coinbase/BTC-USD was added
+   (`canonical_symbol='BTC-USD'`, `instrument='BTC'`, `asset_quote='USD'`),
+   distinct from `BTC-USDT` (`asset_quote='USDT'`) but grouped under the same
+   instrument.
+3. **Relative latency: PASS, with a documented caveat.** Both exchanges showed
+   `ingest_time_ms - event_time_ms` averaging around -440 to -480ms — i.e.
+   negative latency, meaning local ingest time was *before* the exchange-reported
+   event time. Both exchanges showed the same sign and similar magnitude, which
+   is consistent with **local clock skew** (the validation machine's clock running
+   ~450ms behind exchange-reported times), not a per-exchange parsing or unit
+   bug — a unit/format bug would show order-of-magnitude differences between
+   exchanges, not a shared ~450ms offset. **Known debt**: `ingest_time_ms -
+   event_time_ms` is not a reliable latency metric without NTP sync / clock-skew
+   calibration. Relevant for v0.55+ (latency-sensitive analysis); not a v0.45
+   blocker.
+4. **Relative price: PASS.** BTC-USDT (binance) vs BTC-USD (coinbase) average
+   price differed by -0.0537% over the run — within the expected USDT/USD basis
+   range (<0.1%). Strongest evidence both feeds measure the same real market
+   correctly.
+5. **Replay determinism: PASS.** Interleaving by `event_time_ms` produced a
+   plausible single timeline; Coinbase's 250ms-batched trades clustered at shared
+   timestamps as expected, Binance's per-trade messages interleaved correctly
+   around them.
+
+**Verdict: v0.45 hypothesis validated.** The multi-exchange model (canonical
+`trades`, `symbol_registry` with `instrument` grouping, `ExchangeConnector`
+interface) survived a second exchange with two schema-level fixes (v0.45a, v0.45c)
+and zero per-connector hacks. v0.55 (Bybit perpetuals) and v0.65 (OKX) can build on
+this.
+
+Two bugs were also found and fixed in `BinanceConnector` during validation (both
+pre-existing misalignments from v0.35, surfaced by writing real events to `trades`
+for the first time): it emitted `trade_id` instead of `exchange_trade_id`, and
+`is_buyer_maker` instead of `side`. Both fixed by direct field rename/remap, no
+schema changes needed (v0.45a already covered the target schema correctly).
