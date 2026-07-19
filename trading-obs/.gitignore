@@ -5,3 +5,5 @@ kerno.db-wal
 __pycache__/
 .env
 *.pyc
+backups/
+check_tables.py

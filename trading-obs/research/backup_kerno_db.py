@@ -25,7 +25,9 @@ import time
 
 DB_PATH = "kerno.db"
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or ".", "backups")
-KEEP_LAST = 5  # rotation: keep only the 5 most recent backups
+KEEP_LAST = 2  # rotation: kerno.db grows with each new exchange (2.5GB+ already) —
+               # 2 backups is the ceiling this disk can safely absorb right now.
+               # Re-evaluate KEEP_LAST whenever kerno.db size or free disk space changes materially.
 
 
 def main():
@@ -70,9 +72,18 @@ def main():
     # Disk space check — surface the problem before it repeats
     total, used, free = shutil.disk_usage(os.path.dirname(os.path.abspath(DB_PATH)) or ".")
     free_gb = free / (1024 ** 3)
+    projected_full_rotation_gb = (src_size_mb / 1024) * KEEP_LAST
     print(f"Free disk space on this drive: {free_gb:.2f} GB")
+    print(f"Projected space needed at full rotation ({KEEP_LAST} backups): {projected_full_rotation_gb:.2f} GB")
     if free_gb < 5:
         print("WARNING: free disk space below 5GB. Address this before running further migrations.")
+    if free_gb < projected_full_rotation_gb:
+        print(
+            f"WARNING: current free space ({free_gb:.2f} GB) is less than what full backup "
+            f"rotation will require ({projected_full_rotation_gb:.2f} GB). This backup system "
+            f"could cause the next disk-full incident. Move backups off this drive (cloud/external) "
+            f"or lower KEEP_LAST before relying on this."
+        )
 
 
 if __name__ == "__main__":
