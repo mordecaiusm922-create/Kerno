@@ -24,3 +24,7 @@ __pycache__/
 .ruff_cache/
 build/
 dist/
+
+# dataset build outputs
+dataset/
+.dump-cache/

@@ -62,9 +62,8 @@ def test_engine_worker_resumes_from_cursor(db, monkeypatch):
         rows = c.fetchall("SELECT exchange_trade_id FROM signals ORDER BY event_time_ms")
     ids = [r["exchange_trade_id"] for r in rows]
     mem_ids = [r["exchange_trade_id"] for r in _in_memory(trades)]
-    # the restart may suppress one event inside the conservative cooldown right after the cursor, nothing else
-    assert set(ids) <= set(mem_ids)
-    assert len(ids) >= len(mem_ids) - 1
+    # a restart reproduces the continuous run exactly (see engine.WARMUP_MS)
+    assert ids == mem_ids
 
 
 def _signal(ts, direction=1):

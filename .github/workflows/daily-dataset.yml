@@ -1,0 +1,82 @@
+name: daily-dataset
+
+# Builds the open microstructure dataset from free public exchange dumps and
+# publishes it to Hugging Face. Zero infrastructure: runs on GitHub's free
+# runners (unlimited minutes for public repositories).
+#
+# Setup (once):
+#   Settings -> Secrets and variables -> Actions
+#     Secret   HF_TOKEN         Hugging Face token with write access
+#     Variable HF_DATASET_REPO  e.g. <your-hf-user>/kerno-microstructure
+# Without them the dataset is still built and kept as a workflow artifact for 7 days.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # daily; processes the UTC day two days ago (exchanges publish with a lag)
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First UTC day YYYY-MM-DD (empty = two days ago)"
+        required: false
+      end:
+        description: "Last UTC day YYYY-MM-DD (empty = same as start; max 31 days)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-dataset
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        working-directory: trading-obs
+    env:
+      HAS_HF: ${{ secrets.HF_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install (hash-pinned)
+        run: |
+          pip install --require-hashes -r requirements.txt
+          pip install --no-deps -e .
+      - name: Build dataset
+        env:
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          LOG_LEVEL: INFO
+        run: |
+          args=()
+          if [ -n "$START" ]; then
+            args+=(--start "$START")
+            if [ -n "$END" ]; then args+=(--end "$END"); fi
+          fi
+          kerno dataset build "${args[@]}" --out dataset --cache "$RUNNER_TEMP/dump-cache"
+      - name: Keep as artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kerno-dataset-${{ github.run_id }}
+          path: trading-obs/dataset
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Publish to Hugging Face
+        if: ${{ !cancelled() && env.HAS_HF == 'true' && vars.HF_DATASET_REPO != '' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_REPO: ${{ vars.HF_DATASET_REPO }}
+        run: |
+          if [ -d dataset/manifest ]; then
+            kerno dataset publish --out dataset --repo "$HF_DATASET_REPO"
+          else
+            echo "nothing built; skipping publish"
+          fi

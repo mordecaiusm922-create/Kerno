@@ -7,7 +7,7 @@ from kerno.model import MANIFEST, LinearModel, ModelRegistry, save_model
 
 def _m(**kw):
     base = dict(id="m1", stage=2, scope="binance:BTCUSDT", features=["a", "b"], mean=[1.0, 2.0], scale=[2.0, 4.0],
-                coef=[0.5, -1.0], intercept=0.1, feature_version="fv2")
+                coef=[0.5, -1.0], intercept=0.1, feature_version="fv3")
     base.update(kw)
     return LinearModel(**base)
 
@@ -25,7 +25,7 @@ def test_matches_sklearn():
     clf = sk.LogisticRegression().fit(sc.transform(X), y)
     iso = IsotonicRegression(out_of_bounds="clip").fit(clf.predict_proba(sc.transform(X))[:, 1], y)
     m = LinearModel(id="x", stage=1, scope="*", features=["f0", "f1", "f2"], mean=list(sc.mean_), scale=list(sc.scale_),
-                    coef=list(clf.coef_[0]), intercept=float(clf.intercept_[0]), feature_version="fv2",
+                    coef=list(clf.coef_[0]), intercept=float(clf.intercept_[0]), feature_version="fv3",
                     calibration={"x": list(iso.X_thresholds_), "y": list(iso.y_thresholds_)})
     expected = iso.predict(clf.predict_proba(sc.transform(X))[:, 1])
     got = [m.predict({"f0": r[0], "f1": r[1], "f2": r[2]}) for r in X]
@@ -48,7 +48,7 @@ def test_registry_verifies_hashes(tmp_path):
 
 
 def test_registry_rejects_traversal_and_other_feature_versions(tmp_path):
-    save_model(_m(feature_version="fv1"), tmp_path)
+    save_model(_m(feature_version="fv0"), tmp_path)
     manifest = json.loads((tmp_path / MANIFEST).read_text())
     manifest["../evil.json"] = "0" * 64
     manifest["model.pkl"] = "0" * 64

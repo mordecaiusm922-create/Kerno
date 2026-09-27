@@ -10,6 +10,7 @@ kerno <command>
   train                       train + validate a model from resolved signals
   archive                     export old trades to Parquet (optionally delete them)
   migrate-sqlite PATH         copy a legacy local kerno.db into DATABASE_URL
+  dataset build|publish       daily open dataset from free public dumps (no server needed)
   keys create|list|revoke     manage API keys
 """
 
@@ -115,6 +116,36 @@ def cmd_replay(args, settings) -> None:
     print(json.dumps({"signals_written": n, "last_cursor": list(cursor)}))
 
 
+DEFAULT_DATASET_SOURCES = "binance-spot:BTCUSDT,binance-um:BTCUSDT,binance-spot:ETHUSDT,binance-um:ETHUSDT,bybit:BTCUSDT"
+
+
+def cmd_dataset(args, settings) -> None:
+    from datetime import UTC, date, datetime, timedelta
+
+    from kerno.dataset import build_range, publish
+    from kerno.sources import parse_source
+
+    if args.dataset_cmd == "publish":
+        print(json.dumps({"commit": publish(args.out, args.repo)}))
+        return
+    if args.date:
+        start = end = date.fromisoformat(args.date)
+    elif args.start:
+        start = date.fromisoformat(args.start)
+        end = date.fromisoformat(args.end) if args.end else start
+    else:
+        start = end = datetime.now(UTC).date() - timedelta(days=2)
+    if (end - start).days + 1 > args.max_days:
+        sys.exit(f"range of {(end - start).days + 1} days exceeds --max-days {args.max_days}")
+    sources = [parse_source(s) for s in args.sources.split(",") if s.strip()]
+    manifests = build_range(sources, start, end, args.out, args.cache, settings.cost_bps, settings.entry_delay_ms)
+    report = [{"date": m["date"], "outputs": len(m["outputs"]), "failures": m["failures"], "seconds": m["seconds"]}
+              for m in manifests]
+    print(json.dumps(report, indent=2))
+    if any(m["failures"] for m in manifests):
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -152,6 +183,20 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("path", type=Path)
     sp.add_argument("--since-days", type=float)
     sp.add_argument("--with-raw", action="store_true")
+    sp = sub.add_parser("dataset", help="build/publish the daily open dataset from public dumps")
+    ds = sp.add_subparsers(dest="dataset_cmd", required=True)
+    db_ = ds.add_parser("build")
+    db_.add_argument("--date", help="UTC day YYYY-MM-DD (default: two days ago)")
+    db_.add_argument("--start")
+    db_.add_argument("--end")
+    db_.add_argument("--sources", default=DEFAULT_DATASET_SOURCES,
+                     help=f"comma-separated kind:SYMBOL (default {DEFAULT_DATASET_SOURCES})")
+    db_.add_argument("--out", type=Path, default=Path("dataset"))
+    db_.add_argument("--cache", type=Path, default=Path(".dump-cache"))
+    db_.add_argument("--max-days", type=int, default=31)
+    dp = ds.add_parser("publish")
+    dp.add_argument("--out", type=Path, default=Path("dataset"))
+    dp.add_argument("--repo", required=True, help="Hugging Face dataset repo id, e.g. user/kerno-microstructure")
     sp = sub.add_parser("keys")
     ks = sp.add_subparsers(dest="keys_cmd", required=True)
     kc = ks.add_parser("create")
@@ -208,6 +253,8 @@ def main(argv: list[str] | None = None) -> None:
         t0 = time.time()
         report = migrate(args.path, get_db(settings.database_url), args.since_days, args.with_raw)
         print(json.dumps({**report, "seconds": round(time.time() - t0, 1)}, indent=2))
+    elif args.cmd == "dataset":
+        cmd_dataset(args, settings)
     elif args.cmd == "keys":
         from kerno.auth import create_key, list_keys, revoke_key
 

@@ -18,9 +18,11 @@ NO_DATA instead of being scored against a stale price.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from kerno.db import Conn, Database
@@ -44,23 +46,45 @@ def _first_after(c: Conn, exchange: str, symbol: str, ts: int) -> dict[str, Any]
     return row
 
 
-def resolve_signal(c: Conn, sig: dict[str, Any], cost_bps: float, entry_delay_ms: int) -> dict[str, Any]:
-    ex, sym, t0 = sig["exchange"], sig["symbol"], int(sig["event_time_ms"])
-    entry = _first_after(c, ex, sym, t0 + entry_delay_ms)
-    exits = [_first_after(c, ex, sym, t0 + h) for h in HORIZONS_MS]
+def resolve_with(lookup: Callable[[int], float | None], t0: int, predicted_dir: int | None,
+                 cost_bps: float, entry_delay_ms: int) -> dict[str, Any]:
+    """
+    Outcome of an event at t0. `lookup(ts)` returns the price of the first trade
+    at or after ts (or None if there is none within MAX_GAP_MS). Shared by the
+    database validator and the offline dataset builder so both score identically.
+    """
+    entry = lookup(t0 + entry_delay_ms)
+    exits = [lookup(t0 + h) for h in HORIZONS_MS]
     if entry is None or any(e is None for e in exits):
         return {"status": "NO_DATA"}
-
-    p0 = float(entry["price"])
-    out: dict[str, Any] = {"status": "RESOLVED", "price_entry": p0, "cost_bps": cost_bps}
-    direction = sig.get("predicted_dir")
-    for h, e in zip(HORIZONS_MS, exits):
+    out: dict[str, Any] = {"status": "RESOLVED", "price_entry": entry, "cost_bps": cost_bps}
+    for h, exit_price in zip(HORIZONS_MS, exits):
         tag = f"{h // 1000}s"
-        ret = (float(e["price"]) - p0) / p0 * 1e4
-        out[f"price_{tag}"] = float(e["price"])
+        ret = (exit_price - entry) / entry * 1e4
+        out[f"price_{tag}"] = exit_price
         out[f"ret_{tag}_bps"] = round(ret, 6)
-        out[f"pnl_{tag}_bps"] = round(direction * ret - cost_bps, 6) if direction else None
+        out[f"pnl_{tag}_bps"] = round(predicted_dir * ret - cost_bps, 6) if predicted_dir else None
     return out
+
+
+def series_lookup(times: list[int], prices: list[float]) -> Callable[[int], float | None]:
+    """lookup() over in-memory trades sorted by (event_time_ms, exchange_trade_id)."""
+
+    def lookup(ts: int) -> float | None:
+        i = bisect.bisect_left(times, ts)
+        if i == len(times) or times[i] - ts > MAX_GAP_MS:
+            return None
+        return prices[i]
+
+    return lookup
+
+
+def resolve_signal(c: Conn, sig: dict[str, Any], cost_bps: float, entry_delay_ms: int) -> dict[str, Any]:
+    def lookup(ts: int) -> float | None:
+        row = _first_after(c, sig["exchange"], sig["symbol"], ts)
+        return float(row["price"]) if row else None
+
+    return resolve_with(lookup, int(sig["event_time_ms"]), sig.get("predicted_dir"), cost_bps, entry_delay_ms)
 
 
 def validate_pending(db: Database, cost_bps: float, entry_delay_ms: int, batch: int = 1_000) -> int:

@@ -1,5 +1,7 @@
 # Llevar Kerno a la nube (Supabase)
 
+> **¿Sin presupuesto?** Empieza por la ruta de coste cero de [dataset.md](dataset.md): GitHub Actions + Hugging Face, sin servidor ni base de datos. Esta guía es para cuando necesites tiempo real y una API propia.
+
 ## ¿Firebase o Supabase?
 
 **Supabase.** Kerno es una serie temporal de ticks con consultas SQL (ventanas, agregaciones por minuto, joins entre exchanges). Eso es exactamente lo que hace Postgres, y Supabase *es* Postgres gestionado.

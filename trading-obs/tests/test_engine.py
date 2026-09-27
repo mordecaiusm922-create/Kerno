@@ -51,7 +51,7 @@ def test_spike_direction_and_fields():
 def _model(stage, coef_sign=1.0):
     feats = ["abs_spike_bps", "burst_1s"]
     return LinearModel(id=f"s{stage}", stage=stage, scope="*", features=feats, mean=[0, 0], scale=[1, 1],
-                       coef=[coef_sign, 0.0], intercept=0.0, feature_version="fv2")
+                       coef=[coef_sign, 0.0], intercept=0.0, feature_version="fv3")
 
 
 def test_scoring_and_joint_score():
@@ -65,3 +65,30 @@ def test_scoring_and_joint_score():
     for s in run(make_trades(), reg):
         assert s["signal"] == "ABSORPTION" and s["predicted_dir"] == -s["spike_dir"]
         assert s["p_tradeable"] is None and s["joint_score"] is None
+
+
+def test_warm_start_matches_continuous_run():
+    """Processing from any point after a WARMUP_MS warm-up equals one continuous run."""
+    from kerno.engine import WARMUP_MS
+
+    trades = make_trades(8000, jump_every=15)
+    full = run(trades)
+    for cut_idx in (3000, 5000, 6500):
+        cut = trades[cut_idx]["event_time_ms"]
+        e = SignalEngine("binance", "BTCUSDT")
+        for t in trades[:cut_idx]:
+            if t["event_time_ms"] >= cut - WARMUP_MS:
+                e.warm(t)
+        resumed = [r for r in (e.on_trade(t) for t in trades[cut_idx:]) if r]
+        assert resumed == [s for s in full if s["event_time_ms"] >= cut]
+        assert resumed
+
+
+def test_state_is_time_bounded():
+    trades = make_trades(3000)
+    e = SignalEngine("binance", "BTCUSDT")
+    for t in trades:
+        e.on_trade(t)
+    oldest = trades[-1]["event_time_ms"] - 300_000
+    assert all(ts >= oldest for ts, _ in e.window.abs_returns)
+    assert all(t.ts >= oldest for t in e.window.ticks)
