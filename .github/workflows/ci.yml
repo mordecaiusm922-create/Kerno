@@ -25,7 +25,7 @@ jobs:
     env:
       KERNO_TEST_POSTGRES_URL: postgresql://kerno:kerno@localhost:5432/kerno_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v5
