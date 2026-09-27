@@ -1,90 +1,35 @@
-# API
+# API (v1)
 
-Base URL (local dev): `http://localhost:8000`
+All `/v1/*` endpoints require `X-API-Key: kerno_...` (create one with
+`kerno keys create <client-name> [--rate N]`). Responses are JSON, `Cache-Control: no-store`.
+Every request is recorded in `api_audit_log`. Errors: 401 bad or missing key,
+429 rate limit (see `Retry-After`), 400/422 invalid parameters.
 
-## Current endpoints (v0.1, live)
+| Endpoint | Params | Returns |
+|---|---|---|
+| `GET /health` (public) | — | `{status, version, database}` |
+| `GET /v1/trades` | `exchange=binance`, `symbol=BTCUSDT`, `limit≤1000`, `before_ms` | latest canonical trades, newest first (page backwards with `before_ms`) |
+| `GET /v1/replay` | `from`, `to` (ms, window ≤ 1h), `exchange`, `symbol`, `limit≤5000` | trades in time order |
+| `GET /v1/metrics` | `exchange`, `symbol`, `minutes≤240` | 1-minute buckets: count, latency, low/high, volume |
+| `GET /v1/signals` | `exchange`, `symbol`, `limit≤500`, `scored_only`, `min_joint`, `include_features` | signals with model outputs and resolved outcomes |
+| `GET /v1/performance` | `exchange`, `symbol`, `horizon=10\|30`, `last_n` | n, hit rate, mean net/gross bps, std, t-stat for scored signals |
+| `GET /v1/basis` | `limit≤2000` | spot/perp basis samples |
+| `GET /v1/models` | — | deployed models with their validation metrics |
+| `GET /terminal` (public page) | — | web terminal; asks for an API key |
 
-### `GET /health`
+Symbols are the canonical ones stored in `trades.symbol`: `BTCUSDT` (Binance
+spot), `BTCUSDT-PERP` (Bybit), `BTC-USDT` (OKX), `BTC-USD` (Coinbase).
 
-Liveness check. Returns 200 OK if the API process is up and DB connection works.
+## Signal fields
 
-### `GET /signals`
-
-Returns recent signals (Stage 1 + Stage 2 + joint score) for a symbol.
-
-**Query params:**
-
-| Param | Type | Required | Notes |
-|---|---|---|---|
-| `symbol` | string | yes | e.g. `BTCUSDT` |
-| `limit` | int | no | number of most recent signals, default unspecified |
-
-**Response shape:**
-
-```json
-{
-  "symbol": "BTCUSDT",
-  "price": 78128.15,
-  "event_time_ms": 1777666951310,
-  "signal": "CONTINUATION",
-  "spike_type": "SMALL",
-  "score": 0.802,
-  "confidence": "HIGH",
-  "interpretation": "SMALL spike — directional momentum detected. Continuation likely (80%).",
-  "action": "FILTER_IN",
-  "drivers": ["latency_ms", "burst_1s", "dir_burst"],
-  "p_tradeable": 0.795,
-  "joint_score": 0.799
-}
-```
-
-`joint_score = p_tradeable * score`. `drivers` lists the top contributing features for
-this specific prediction.
-
-### `GET /events`
-
-Returns recent raw market events for a symbol.
-
-**Query params:**
-
-| Param | Type | Required | Notes |
-|---|---|---|---|
-| `symbol` | string | yes | e.g. `BTCUSDT` |
-| `limit` | int | no | number of most recent events |
-
-### `GET /terminal`
-
-Serves `terminal.html` — the Signal Terminal UI. Not a JSON endpoint.
-
-## Planned endpoints
-
-### v0.25 (Market Schema)
-
-- `GET /symbols` — returns the Symbol Registry (canonical symbol -> per-exchange
-  native symbol mappings).
-
-### v0.6 (Deterministic Replay)
-
-- `POST /replay/sessions` — start a replay session (symbol, date range, speed).
-- `GET /replay/sessions/{id}` — replay session status.
-- `DELETE /replay/sessions/{id}` — stop a replay session.
-
-### v0.7 (Backtesting)
-
-- `POST /backtest` — run a strategy against a date range, returns performance
-  metrics including realistic fees/spread/slippage.
-
-### v0.95 (Alerts)
-
-- `POST /alerts` — register a webhook/Telegram/Discord alert rule.
-- `GET /alerts` / `DELETE /alerts/{id}` — manage alert rules.
-
-### v1.0 (Internal Quant API)
-
-- Full REST + WebSocket surface, API-key authenticated. Existing endpoints above
-  migrate under this auth requirement.
-
-## Auth
-
-No authentication currently (local dev only). API-key auth is planned for v1.0
-(Internal Quant API) and is a hard requirement before any public exposure.
+| Field | Meaning |
+|---|---|
+| `spike_bps`, `spike_dir`, `bucket` | the tick move that triggered the event, and its percentile bucket vs the trailing distribution |
+| `p_tradeable` | Stage 1: P(\|move\| > cost within the horizon); `null` if no Stage 1 model |
+| `p_continuation` | Stage 2: P(the move continues in the spike direction) |
+| `joint_score` | `p_tradeable × P(predicted direction)` |
+| `signal` | `CONTINUATION`, `ABSORPTION`, `NO_EDGE` (Stage 1 below threshold) or `UNSCORED` (no model) |
+| `status` | `PENDING` → `RESOLVED` or `NO_DATA` |
+| `price_entry` | first trade ≥ event + entry delay |
+| `ret_10s_bps`, `ret_30s_bps` | market return from entry |
+| `pnl_10s_bps`, `pnl_30s_bps` | `predicted_dir × ret − cost_bps` |

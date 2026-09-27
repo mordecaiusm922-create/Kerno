@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: trading-obs
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      KERNO_TEST_POSTGRES_URL: postgresql://kerno:kerno@localhost:5432/kerno_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare a Supabase-like database (anon/authenticated roles with default grants)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE kerno LOGIN PASSWORD 'kerno';
+          CREATE DATABASE kerno_test OWNER kerno;
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          GRANT anon, authenticated TO kerno;
+          SQL
+          psql -h localhost -U postgres -d kerno_test -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT ALL ON SCHEMA public TO kerno;
+          GRANT USAGE ON SCHEMA public TO anon, authenticated;
+          ALTER DEFAULT PRIVILEGES FOR ROLE kerno IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
+          SQL
+      - name: Install (hash-pinned)
+        run: |
+          pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+          pip install --no-deps -e .
+      - name: Lint
+        run: ruff check kerno tests
+      - name: Tests (SQLite + Postgres)
+        run: pytest
+      - name: Dependency vulnerability audit
+        run: pip-audit --strict -r requirements.txt --disable-pip

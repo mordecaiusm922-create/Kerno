@@ -1,33 +1,48 @@
-version: "3.9"
-
+# Local stack. With Supabase you don't need the `db` service: put your
+# Supabase connection string in .env as DATABASE_URL and run
+#   docker compose up api worker
+#
+# Local Postgres instead:  docker compose --profile localdb up
 services:
-  postgres:
+  db:
+    profiles: ["localdb"]
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER:     postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB:       trading_obs
+      POSTGRES_USER: kerno
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: kerno
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # never exposed beyond this machine
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U kerno"]
       interval: 5s
-      timeout: 5s
-      retries: 5
+      retries: 10
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    environment:
-      PGADMIN_DEFAULT_EMAIL:    admin@trading.local
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
+  migrate:
+    build: .
+    env_file: .env
+    command: ["kerno", "init-db"]
+
+  worker:
+    build: .
+    env_file: .env
+    command: ["kerno", "run-all"]
+    restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

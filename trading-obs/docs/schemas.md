@@ -1,8 +1,9 @@
 # Market Schema
 
-> Status: design reference for v0.25 (Market Schema milestone). The current
-> `market_events` table is Binance-shaped and does not yet conform to this schema.
-> This document defines the target so v0.25 has no ambiguity about scope.
+> Status (v1.0): the `trades` table implements the Trade schema below for all four
+> exchanges. `market_events` and `feature_store` are retired (import legacy data with
+> `kerno migrate-sqlite`). Features now live per signal in `signals.features`, versioned
+> by `FEATURE_VERSION` - see architecture.md.
 
 ## Goals
 
