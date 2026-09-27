@@ -19,6 +19,14 @@ See [docs/architecture.md](docs/architecture.md) for the guarantees (no
 look-ahead, determinism, no train/serve skew, honest outcomes) and how they
 are tested.
 
+## Zero-cost daily dataset
+
+No server needed: a GitHub Actions workflow downloads the exchanges' free
+public trade dumps every day, runs the same engine, and publishes verifiable
+events, summaries and spot/perp basis to Hugging Face. See
+[docs/dataset.md](docs/dataset.md) (in Spanish). The daily build is proven
+equal to the full database pipeline in `tests/test_dataset.py`.
+
 ## Quick start (local, SQLite)
 
 ```bash
@@ -49,6 +57,7 @@ where to run the workers.
 | `kerno train --exchange --symbol [--stage 1\|2\|all]` | train, validate, and deploy only if the gate passes |
 | `kerno archive [--before-days 7] [--delete]` | verified Parquet export (+ S3 upload), optional hot-store cleanup |
 | `kerno migrate-sqlite PATH [--since-days N]` | import a legacy or local SQLite database |
+| `kerno dataset build\|publish` | daily open dataset from public dumps (no server, no DB) |
 | `kerno keys create\|list\|revoke` | API keys per client |
 
 ## Models
@@ -86,6 +95,7 @@ hash-pinned lock file.
 - [api.md](docs/api.md): endpoints and fields
 - [replay.md](docs/replay.md): determinism contract and versioning
 - [schemas.md](docs/schemas.md), [connectors.md](docs/connectors.md): canonical schema and exchange findings
+- [dataset.md](docs/dataset.md): zero-cost daily dataset and business path (in Spanish)
 - [cloud.md](docs/cloud.md): Supabase deployment (in Spanish)
 - [audit.md](docs/audit.md): September 2026 security and integrity audit
 - [vision.md](docs/vision.md)

@@ -27,7 +27,12 @@ from kerno.model import ModelRegistry
 
 logger = logging.getLogger("kerno.engine")
 
-ENGINE_VERSION = "engine-2"
+ENGINE_VERSION = "engine-3"
+
+# Replaying this much history before a start point reproduces a continuous run
+# exactly: the first MAX_WINDOW_MS rebuilds the window, the second replays event
+# detection so the cooldown state is also exact.
+WARMUP_MS = 2 * MAX_WINDOW_MS
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,7 @@ class SignalEngine:
         self._last_event_ts: int | None = None
 
     def warm(self, trade: dict[str, Any]) -> None:
-        """Feed a historical trade without emitting (restores state after restart)."""
+        """Feed a historical trade without emitting (restores state; see WARMUP_MS)."""
         self._advance(trade, emit=False)
 
     def on_trade(self, trade: dict[str, Any]) -> dict[str, Any] | None:
@@ -67,12 +72,14 @@ class SignalEngine:
         tick = Tick(int(trade["event_time_ms"]), price, float(trade["quantity"]), _side(trade["side"]), ret_bps)
 
         record = None
-        if emit and self._is_candidate(tick):
-            tail = sorted(self.window.abs_returns)
+        if self._is_candidate(tick):
+            tail = self.window.sorted_tail()
             abs_bps = abs(ret_bps)
             pct_rank = sum(1 for x in tail if x <= abs_bps) / len(tail)
             if pct_rank >= self.config.min_pctile:
-                record = self._build(trade, tick, tail)
+                # detection also runs while warming, so cooldown state is exact
+                if emit:
+                    record = self._build(trade, tick, tail)
                 self._last_event_ts = tick.ts
         self.window.push(tick)
         return record
@@ -202,19 +209,17 @@ def _save_cursor(c: Conn, engine: SignalEngine, cursor: tuple[int, str]) -> None
 
 
 def warm_engine(db: Database, engine: SignalEngine, cursor: tuple[int, str]) -> None:
-    """Rebuild the rolling window from the MAX_WINDOW_MS of trades up to and including `cursor`."""
+    """Replay the WARMUP_MS of trades up to and including `cursor` so state matches a continuous run."""
     with db.connect() as c:
         rows = c.fetchall(
             "SELECT exchange_trade_id, price, quantity, side, event_time_ms FROM trades "
             "WHERE exchange = ? AND symbol = ? AND event_time_ms >= ? "
             "AND (event_time_ms, exchange_trade_id) <= (?, ?) "
             "ORDER BY event_time_ms, exchange_trade_id",
-            (engine.exchange, engine.symbol, cursor[0] - MAX_WINDOW_MS, cursor[0], cursor[1]),
+            (engine.exchange, engine.symbol, cursor[0] - WARMUP_MS, cursor[0], cursor[1]),
         )
     for r in rows:
         engine.warm(r)
-    # cooldown state can't be recovered exactly; be conservative
-    engine._last_event_ts = cursor[0]
 
 
 def run_engine(db: Database, streams: list[tuple[str, str]], models: ModelRegistry,

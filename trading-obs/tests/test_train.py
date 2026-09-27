@@ -23,7 +23,7 @@ def _synthetic_signals(db, n=4000, seed=1):
                      "event_time_ms": 1_700_000_000_000 + i * 5_000, "price": 100.0, "spike_bps": 2.0 * spike_dir,
                      "spike_dir": spike_dir, "bucket": "LARGE", "features": json.dumps(feats), "p_tradeable": None,
                      "p_continuation": None, "joint_score": None, "signal": "UNSCORED", "predicted_dir": None,
-                     "stage1_model": None, "stage2_model": None, "feature_version": "fv2", "engine_version": "t"})
+                     "stage1_model": None, "stage2_model": None, "feature_version": "fv3", "engine_version": "t"})
         outcomes.append((ret, str(i)))
     with db.connect() as c:
         insert_signals(c, recs)

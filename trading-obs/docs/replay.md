@@ -15,10 +15,13 @@ outcome columns).
   ordering of the exchange id, which is stable and identical live and in replay.
 - **Idempotency:** `signals` is unique on `(exchange, symbol, exchange_trade_id,
   feature_version)`, so replays never duplicate signals.
-- **Warm-up:** all feature windows are ≤ 5 minutes (`MAX_WINDOW_MS`), so
-  restarting from a cursor and preloading 5 minutes of trades reproduces the
-  state exactly. The only exception is the 1-second event cooldown immediately
-  after a restart, which is conservatively re-armed.
+- **Warm-up:** all engine state is bounded to the last 5 minutes
+  (`MAX_WINDOW_MS`), including the spike-percentile tail since `fv3`.
+  Replaying `WARMUP_MS` (10 minutes) before any start point reproduces a
+  continuous run exactly: 5 minutes rebuild the window and 5 more replay event
+  detection so the 1-second cooldown state is exact too. The worker restart
+  and the daily dataset builder both rely on this, and tests assert exact
+  equality.
 - **Late trades:** the live engine runs 3 s behind wall clock. A trade that
   arrives later than that with an older event time is not seen live but is
   seen by a later replay. The ingest stats log reports latency so this can be

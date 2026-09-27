@@ -9,6 +9,10 @@ exchange_trade_id), so nothing here can see the future.
 
 Bump FEATURE_VERSION whenever a definition changes. Signals and models are
 keyed by it; a model trained on one version is never applied to another.
+
+State is bounded by time: everything the engine knows at time t comes from
+trades in [t - MAX_WINDOW_MS, t]. That is what lets a day (or a restart) be
+processed independently and still match a continuous run exactly.
 """
 
 from __future__ import annotations
@@ -17,9 +21,9 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 
-FEATURE_VERSION = "fv2"
+FEATURE_VERSION = "fv3"  # fv3: spike percentile tail is time-bounded (fv2 kept 500 returns of any age)
 MAX_WINDOW_MS = 300_000  # longest lookback used by any feature
-TAIL_RETURNS = 500  # trailing non-zero tick returns used for spike percentiles
+TAIL_RETURNS = 500  # at most this many trailing non-zero |returns| (within MAX_WINDOW_MS) for spike percentiles
 
 
 @dataclass(slots=True)
@@ -36,7 +40,7 @@ class Window:
     """Rolling state for one (exchange, symbol) stream."""
 
     ticks: deque[Tick] = field(default_factory=deque)
-    abs_returns: deque[float] = field(default_factory=lambda: deque(maxlen=TAIL_RETURNS))
+    abs_returns: deque[tuple[int, float]] = field(default_factory=lambda: deque(maxlen=TAIL_RETURNS))
 
     @property
     def last_price(self) -> float | None:
@@ -48,10 +52,15 @@ class Window:
     def push(self, tick: Tick) -> None:
         self.ticks.append(tick)
         if tick.ret_bps != 0.0:
-            self.abs_returns.append(abs(tick.ret_bps))
+            self.abs_returns.append((tick.ts, abs(tick.ret_bps)))
         horizon = tick.ts - MAX_WINDOW_MS
         while self.ticks and self.ticks[0].ts < horizon:
             self.ticks.popleft()
+        while self.abs_returns and self.abs_returns[0][0] < horizon:
+            self.abs_returns.popleft()
+
+    def sorted_tail(self) -> list[float]:
+        return sorted(v for _, v in self.abs_returns)
 
     def since(self, ts_from: int) -> list[Tick]:
         """Ticks with ts >= ts_from (scans from the newest end)."""
