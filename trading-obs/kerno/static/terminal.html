@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kerno Terminal</title>
+<link rel="stylesheet" href="/static/terminal.css">
+</head>
+<body>
+<header>
+  <h1>KERNO</h1>
+  <form id="controls">
+    <select id="stream" aria-label="Stream">
+      <option value="binance|BTCUSDT">binance · BTCUSDT</option>
+      <option value="binance|ETHUSDT">binance · ETHUSDT</option>
+      <option value="bybit|BTCUSDT-PERP">bybit · BTCUSDT-PERP</option>
+      <option value="okx|BTC-USDT">okx · BTC-USDT</option>
+    </select>
+    <input id="apikey" type="password" placeholder="API key" autocomplete="off" aria-label="API key">
+    <button type="submit">Connect</button>
+  </form>
+  <span id="status" class="status">disconnected</span>
+</header>
+<main>
+  <section>
+    <h2>Performance <small>(net of costs, last 2000 scored signals)</small></h2>
+    <table id="perf"><thead><tr><th>group</th><th>horizon</th><th>n</th><th>hit rate</th><th>mean net bps</th><th>mean gross bps</th><th>t-stat</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section>
+    <h2>Latest signals</h2>
+    <table id="signals"><thead><tr><th>time</th><th>price</th><th>spike bps</th><th>bucket</th><th>signal</th><th>p tradeable</th><th>p cont.</th><th>status</th><th>pnl 10s</th><th>pnl 30s</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section>
+    <h2>Spot / perp basis (BTC)</h2>
+    <table id="basis"><thead><tr><th>time</th><th>spot</th><th>perp</th><th>basis %</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
+<script src="/static/terminal.js"></script>
+</body>
+</html>

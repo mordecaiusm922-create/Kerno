@@ -1,127 +1,91 @@
-﻿# Kerno
+# Kerno
 
-**Real-time market microstructure research engine.**
+**Crypto market microstructure data and research infrastructure.**
 
-Kerno ingests tick-level trade events from Binance, computes microstructure features, and classifies market events as continuation, absorption, or no-edge using asset-specific calibrated models.
+Kerno captures tick-level trades from Binance, Bybit, OKX and Coinbase into
+one canonical schema. It detects microstructure events point-in-time, scores
+them with validated two-stage models, and measures every signal's outcome net
+of trading costs. Every number it publishes is reproducible from stored data.
 
----
-
-## What it is
-
-Kerno is a **research infrastructure** for market microstructure intelligence — not a trading bot.
-
-It answers one question per event:
-
-> "Is this market event economically actionable, and if so, is it continuation or absorption?"
-
----
-
-## Architecture
+> Kerno is not a trading bot and does not place orders.
 
 ```
-Binance WebSocket → ingestor.py → kerno.db (SQLite)
-                                       ↓
-                              feature_store (233k rows)
-                                       ↓
-                    Stage 1: Tradability filter (P(tradeable))
-                                       ↓
-                    Stage 2: Directional classifier (P(continuation))
-                                       ↓
-                         Joint score = P(tradeable) × P(continuation)
-                                       ↓
-                    FastAPI /signals → terminal dashboard
+exchanges ─► ingest ─► trades (Postgres/Supabase) ─► engine ─► signals ◄─ validator
+                            │                                    │
+                            └─► archive (Parquet, verified)       └─► read-only API ─► clients
 ```
 
----
+See [docs/architecture.md](docs/architecture.md) for the guarantees (no
+look-ahead, determinism, no train/serve skew, honest outcomes) and how they
+are tested.
+
+## Quick start (local, SQLite)
+
+```bash
+cd trading-obs
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -e ".[archive,train,dev]"
+cp .env.example .env                              # set DATABASE_URL=sqlite:///kerno.db for local
+kerno init-db
+kerno keys create me                              # prints your API key once
+kerno run-all                                     # terminal 1: ingest + engine + validator + basis
+kerno api                                         # terminal 2: http://127.0.0.1:8000/terminal
+```
+
+## Cloud (Supabase)
+
+[docs/cloud.md](docs/cloud.md) covers why Supabase rather than Firebase,
+sizing, migrating an old local `kerno.db`, archiving to Supabase Storage, and
+where to run the workers.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `kerno init-db` | apply migrations (tables, indexes, RLS lock-down on Supabase) |
+| `kerno run-all` / `ingest` / `engine` / `validate [--once]` / `basis` | workers |
+| `kerno api [--host --port]` | read-only HTTP API + terminal |
+| `kerno replay --exchange --symbol` | recompute signals over stored history (same code as live) |
+| `kerno train --exchange --symbol [--stage 1\|2\|all]` | train, validate, and deploy only if the gate passes |
+| `kerno archive [--before-days 7] [--delete]` | verified Parquet export (+ S3 upload), optional hot-store cleanup |
+| `kerno migrate-sqlite PATH [--since-days N]` | import a legacy or local SQLite database |
+| `kerno keys create\|list\|revoke` | API keys per client |
 
 ## Models
 
-Two asset-specific models validated with purged walk-forward (60s embargo):
-
-| Model               | Asset   | Type                | Purged AUC | Brier |
-| ------------------- | ------- | ------------------- | ---------- | ----- |
-| BTC friction model  | BTCUSDT | Logistic Regression | 0.634      | 0.058 |
-| ETH flow model      | ETHUSDT | Logistic Regression | 0.662      | 0.089 |
-| Stage 1 tradability | Both    | Logistic Regression | 0.647      | —     |
-
-**BTC** responds to spike size and microstructure friction.
-**ETH** responds to aggressive flow persistence and burst acceleration.
-
----
-
-## Honest limitations
-
-* Models calibrated on May 2026 data (~13 days BTC, ~10 hours ETH)
-* 158/161 validator outcomes were NEUTRAL — market was below economic threshold during capture
-* Stage 1 distribution is compressed (std ~0.04) — needs more regime diversity
-* SQLite is adequate for research; production would require TimescaleDB or DuckDB
-* No execution-aware backtesting yet (fees, slippage not modeled)
-
----
-
-## API
-
-| Endpoint        | Description                                  |
-| --------------- | -------------------------------------------- |
-| `GET /signals`  | Live ML signals with joint score and drivers |
-| `GET /events`   | Raw events with spike intelligence           |
-| `GET /accuracy` | Live win rate from validator                 |
-| `GET /metrics`  | Bucketed market metrics                      |
-| `GET /terminal` | Signal terminal dashboard                    |
-| `GET /health`   | System status                                |
-
-Example `/signals` response:
-
-```json
-{
-  "symbol": "BTCUSDT",
-  "signal": "CONTINUATION",
-  "score": 0.802,
-  "p_tradeable": 0.795,
-  "joint_score": 0.799,
-  "confidence": "HIGH",
-  "drivers": ["latency_ms", "burst_1s", "dir_burst"],
-  "action": "FILTER_IN"
-}
-```
-
----
-
-## Running locally
+No model is deployed by default (`models/manifest.json` is empty). The v0.x
+pickles were removed: they were trained on features that can't be reproduced
+live, with time leakage in calibration ([docs/audit.md](docs/audit.md)).
+Until a model passes the gate, signals are recorded as `UNSCORED` with their
+full feature vectors, which is the training set for the next model:
 
 ```bash
-# Terminal 1 — ingestor
-python ingestor.py
-
-# Terminal 2 — API
-uvicorn api:app --reload
-
-# Dashboard
-open http://localhost:8000/terminal
+kerno replay --exchange binance --symbol BTCUSDT
+kerno validate --once
+kerno train --exchange binance --symbol BTCUSDT
 ```
 
----
+The gate requires test-segment AUC > 0.55 and, for the direction model,
+positive mean PnL after `KERNO_COST_BPS`, measured over every event in the
+test period.
 
-## Stack
+## Tests
 
-* **Ingestion:** Python, Binance WebSocket
-* **Storage:** SQLite (~938 MB, 3M+ events)
-* **API:** FastAPI + Uvicorn
-* **ML:** scikit-learn (LogisticRegression, isotonic calibration)
-* **Dashboard:** Vanilla JS
-* **Validation:** Purged walk-forward, 60s embargo
+```bash
+pytest                                   # SQLite
+KERNO_TEST_POSTGRES_URL=postgresql://... pytest    # also against Postgres
+```
 
----
+CI runs lint, the full suite on SQLite and on a Postgres set up like Supabase
+(`anon`/`authenticated` roles with default grants), and `pip-audit` on the
+hash-pinned lock file.
 
-## Feature specs
+## Docs
 
-* `feature_specs/eth_flow_v1.json` — ETH flow model features
-* `feature_specs/stage1_tradability_v1.yaml` — Stage 1 tradability filter spec
-
----
-
-## Status
-
-> Kerno is in **research infrastructure** phase.
-> The pipeline is operational. The signal exists but has not been validated against execution costs.
-> Next: execution-aware labeling, DuckDB migration, regime-conditioned retraining.
+- [architecture.md](docs/architecture.md): pipeline, guarantees, tables
+- [api.md](docs/api.md): endpoints and fields
+- [replay.md](docs/replay.md): determinism contract and versioning
+- [schemas.md](docs/schemas.md), [connectors.md](docs/connectors.md): canonical schema and exchange findings
+- [cloud.md](docs/cloud.md): Supabase deployment (in Spanish)
+- [audit.md](docs/audit.md): September 2026 security and integrity audit
+- [vision.md](docs/vision.md)

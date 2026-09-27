@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kerno"
+version = "1.0.0"
+description = "Crypto market microstructure data and research infrastructure"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "websockets>=13,<18",
+    "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.optional-dependencies]
+archive = ["pyarrow>=16", "boto3>=1.34"]
+train = ["numpy>=1.26", "scikit-learn>=1.5"]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6", "pip-audit>=2.7"]
+
+[project.scripts]
+kerno = "kerno.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["kerno*"]
+
+[tool.setuptools.package-data]
+kerno = ["schema/*/*.sql", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+extend-exclude = ["research"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008", "B905", "E731"]  # FastAPI defaults; zip strictness; small lambdas

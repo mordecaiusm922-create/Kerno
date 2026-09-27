@@ -1,6 +1,10 @@
-﻿kerno.db
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.zip
 __pycache__/
 *.pyc
 .venv/
-.env
-*.zip

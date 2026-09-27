@@ -1,34 +1,31 @@
-# Replay Engine
+# Replay
 
-> Status: specification skeleton. Full design is scoped for v0.6 (Deterministic
-> Replay). This document exists so v0.15 has placeholders for every planned doc; it
-> is not a complete spec.
+`kerno replay --exchange binance --symbol BTCUSDT [--from-ms ..] [--to-ms ..] [--score]`
+runs the signal engine over stored trades and writes signals. It is the same
+code path as the live engine worker.
 
-## Goal
+## Determinism contract
 
-Reconstruct any historical market state, byte-for-byte, from stored raw/normalized
-events, and replay it at configurable speed (1x / 10x / 100x / as-fast-as-possible)
-through the same feature computation and signal pipeline that runs in production.
+Same trades (exchange, symbol, exchange_trade_id, price, quantity, side,
+event_time_ms) + same `FEATURE_VERSION` + same `ENGINE_VERSION` + same
+`EngineConfig` → byte-identical signal rows (excluding `created_at_ms` and
+outcome columns).
 
-## TODO before v0.6 design is final
+- **Ordering:** `(event_time_ms, exchange_trade_id)`. The tie-break is text
+  ordering of the exchange id, which is stable and identical live and in replay.
+- **Idempotency:** `signals` is unique on `(exchange, symbol, exchange_trade_id,
+  feature_version)`, so replays never duplicate signals.
+- **Warm-up:** all feature windows are ≤ 5 minutes (`MAX_WINDOW_MS`), so
+  restarting from a cursor and preloading 5 minutes of trades reproduces the
+  state exactly. The only exception is the 1-second event cooldown immediately
+  after a restart, which is conservatively re-armed.
+- **Late trades:** the live engine runs 3 s behind wall clock. A trade that
+  arrives later than that with an older event time is not seen live but is
+  seen by a later replay. The ingest stats log reports latency so this can be
+  monitored.
 
-- [ ] Define replay determinism guarantee precisely: same input events + same feature
-      formula version -> byte-identical feature values and signals, regardless of
-      wall-clock time of replay.
-- [ ] Decide event ordering tiebreak rule when `event_time_ms` collides across
-      multiple events (likely: exchange sequence number, then ingest order).
-- [ ] Define replay session API: start/stop, speed control, symbol/date range
-      selection, output sink (live feature_store vs. isolated replay table).
-- [ ] Decide whether replay re-runs the full pipeline (ingestor-equivalent ->
-      feature_store -> models -> signals) or starts from stored normalized events
-      (skipping raw ingestion).
-- [ ] Define how feature formula versioning (v0.8) interacts with replay — can a
-      replay session pin a specific formula version?
-- [ ] Define backtesting integration point (v0.7 depends on this).
+## Versioning
 
-## Constraints carried from architecture.md
-
-- Replay must not introduce non-determinism (no wall-clock dependent code paths in
-  feature computation).
-- Replay reads from the canonical Market Schema (v0.25), not from exchange-native
-  tables.
+Change a feature definition → bump `FEATURE_VERSION` in `kerno/features.py`.
+Old signals stay under the old version; the engine's cursor is per version, so
+the new version starts fresh, and old models are refused automatically.
