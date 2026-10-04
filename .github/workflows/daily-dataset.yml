@@ -63,7 +63,7 @@ jobs:
           kerno dataset build "${args[@]}" --out dataset --cache "$RUNNER_TEMP/dump-cache"
       - name: Keep as artifact
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kerno-dataset-${{ github.run_id }}
           path: trading-obs/dataset
